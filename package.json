@@ -1,0 +1,411 @@
+{
+    "name": "vscode-python-envs",
+    "displayName": "Python Environment Manager",
+    "description": "Provides a unified python environment experience",
+    "version": "0.0.1",
+    "publisher": "ms-python",
+    "engines": {
+        "vscode": "^1.93.0-20240910"
+    },
+    "categories": [
+        "Other"
+    ],
+    "activationEvents": [
+        "onLanguage:python"
+    ],
+    "homepage": "https://github.com/karthiknadig/vscode-python-envs",
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/karthiknadig/vscode-python-envs.git"
+    },
+    "bugs": {
+        "url": "https://github.com/karthiknadig/vscode-python-envs/issues"
+    },
+    "extensionDependencies": [
+        "ms-python.python"
+    ],
+    "main": "./dist/extension.js",
+    "icon": "icon.png",
+    "contributes": {
+        "configuration": {
+            "properties": {
+                "python-envs.defaultEnvManager": {
+                    "type": "string",
+                    "description": "The default environment manager to use for creating and managing environments",
+                    "default": "ms-python.python:venv",
+                    "scope": "window"
+                },
+                "python-envs.defaultPackageManager": {
+                    "type": "string",
+                    "description": "The default package manager to use for installing and managing packages",
+                    "default": "ms-python.python:pip",
+                    "scope": "window"
+                },
+                "python-envs.pythonProjects": {
+                    "type": "array",
+                    "default": [],
+                    "description": "The list of python workspaces",
+                    "scope": "window",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "path": {
+                                "type": "string",
+                                "description": "The path to the workspace folder or a file"
+                            },
+                            "envManager": {
+                                "type": "string",
+                                "description": "The environment manager to use for this workspace",
+                                "default": "ms-python.python:venv"
+                            },
+                            "packageManager": {
+                                "type": "string",
+                                "description": "The package manager to use for this workspace",
+                                "default": "ms-python.python:pip"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "commands": [
+            {
+                "command": "python-envs.setEnvManager",
+                "title": "Set Environment Manager",
+                "category": "Python",
+                "icon": "$(gear)"
+            },
+            {
+                "command": "python-envs.setPkgManager",
+                "title": "Set Package Manager",
+                "category": "Python",
+                "icon": "$(package)"
+            },
+            {
+                "command": "python-envs.addPythonProject",
+                "title": "Add Python Workspace",
+                "category": "Python",
+                "icon": "$(new-folder)"
+            },
+            {
+                "command": "python-envs.removePythonProject",
+                "title": "Remove Python Workspace",
+                "category": "Python",
+                "icon": "$(remove)"
+            },
+            {
+                "command": "python-envs.create",
+                "title": "Create Environment",
+                "category": "Python",
+                "icon": "$(add)"
+            },
+            {
+                "command": "python-envs.createAny",
+                "title": "Create Environment",
+                "category": "Python",
+                "icon": "$(add)"
+            },
+            {
+                "command": "python-envs.set",
+                "title": "Set Workspace Environment",
+                "category": "Python",
+                "icon": "$(check)"
+            },
+            {
+                "command": "python-envs.setEnv",
+                "title": "Set As Workspace Environment",
+                "category": "Python",
+                "icon": "$(check)"
+            },
+            {
+                "command": "python-envs.reset",
+                "title": "Reset Environment Selection to Default",
+                "shortTitle": "Reset Environment",
+                "category": "Python",
+                "icon": "$(sync)"
+            },
+            {
+                "command": "python-envs.remove",
+                "title": "Delete Environment",
+                "category": "Python",
+                "icon": "$(remove)"
+            },
+            {
+                "command": "python-envs.refreshAllManagers",
+                "title": "Refresh All Environment Managers",
+                "shortTitle": "Refresh All",
+                "category": "Python",
+                "icon": "$(refresh)"
+            },
+            {
+                "command": "python-envs.refreshManager",
+                "title": "Refresh Environments List",
+                "category": "Python",
+                "icon": "$(refresh)"
+            },
+            {
+                "command": "python-envs.refreshPackages",
+                "title": "Refresh Packages List",
+                "category": "Python",
+                "icon": "$(refresh)"
+            },
+            {
+                "command": "python-envs.packages",
+                "title": "Install or Remove Packages",
+                "shortTitle": "Modify Packages",
+                "category": "Python",
+                "icon": "$(package)"
+            },
+            {
+                "command": "python-envs.clearCache",
+                "title": "Clear Cache",
+                "category": "Python",
+                "icon": "$(trash)"
+            },
+            {
+                "command": "python-envs.runInTerminal",
+                "title": "Run in Terminal",
+                "category": "Python Envs",
+                "icon": "$(play)"
+            },
+            {
+                "command": "python-envs.createTerminal",
+                "title": "Create Python Terminal",
+                "category": "Python Envs",
+                "icon": "$(terminal)"
+            },
+            {
+                "command": "python-envs.runAsTask",
+                "title": "Run as Task",
+                "category": "Python Envs",
+                "icon": "$(play)"
+            }
+        ],
+        "menus": {
+            "commandPalette": [
+                {
+                    "command": "python-envs.packages",
+                    "when": "false"
+                },
+                {
+                    "command": "python-envs.refreshAllManagers",
+                    "when": "false"
+                },
+                {
+                    "command": "python-envs.refreshManager",
+                    "when": "false"
+                },
+                {
+                    "command": "python-envs.refreshPackages",
+                    "when": "false"
+                },
+                {
+                    "command": "python-envs.create",
+                    "when": "false"
+                },
+                {
+                    "command": "python-envs.setEnv",
+                    "when": "false"
+                },
+                {
+                    "command": "python-envs.reset",
+                    "when": "false"
+                },
+                {
+                    "command": "python-envs.remove",
+                    "when": "false"
+                },
+                {
+                    "command": "python-envs.addPythonProject",
+                    "when": "false"
+                },
+                {
+                    "command": "python-envs.removePythonProject",
+                    "when": "false"
+                },
+                {
+                    "command": "python-envs.createTerminal",
+                    "when": "false"
+                },
+                {
+                    "command": "python-envs.runInTerminal",
+                    "when": "false"
+                },
+                {
+                    "command": "python-envs.runAsTask",
+                    "when": "true"
+                }
+            ],
+            "view/item/context": [
+                {
+                    "command": "python-envs.create",
+                    "group": "inline",
+                    "when": "view == env-managers && viewItem =~ /.*pythonEnvManager.*-create.*/"
+                },
+                {
+                    "command": "python-envs.remove",
+                    "when": "view == env-managers && viewItem =~ /.*pythonEnvironment.*-remove.*/"
+                },
+                {
+                    "command": "python-envs.setEnv",
+                    "group": "inline",
+                    "when": "view == env-managers && viewItem =~ /.*pythonEnvironment.*/"
+                },
+                {
+                    "command": "python-envs.refreshManager",
+                    "group": "inline",
+                    "when": "view == env-managers && viewItem =~ /.*pythonEnvManager.*/"
+                },
+                {
+                    "command": "python-envs.createTerminal",
+                    "group": "inline",
+                    "when": "view == env-managers && viewItem =~ /.*pythonEnvironment.*/"
+                },
+                {
+                    "command": "python-envs.refreshPackages",
+                    "group": "inline",
+                    "when": "view == env-managers && viewItem == python-package-root"
+                },
+                {
+                    "command": "python-envs.packages",
+                    "group": "inline",
+                    "when": "view == env-managers && viewItem =~ /.*pythonEnvironment.*/"
+                },
+                {
+                    "command": "python-envs.packages",
+                    "group": "inline",
+                    "when": "view == python-projects && viewItem == python-env"
+                },
+                {
+                    "command": "python-envs.refreshPackages",
+                    "group": "inline",
+                    "when": "view == python-projects && viewItem == python-package-root"
+                },
+                {
+                    "command": "python-envs.removePythonProject",
+                    "when": "view == python-projects && viewItem == python-workspace"
+                },
+                {
+                    "command": "python-envs.set",
+                    "group": "inline",
+                    "when": "view == python-projects && viewItem == python-workspace"
+                },
+                {
+                    "command": "python-envs.reset",
+                    "when": "view == python-projects && viewItem == python-workspace"
+                },
+                {
+                    "command": "python-envs.createTerminal",
+                    "group": "inline",
+                    "when": "view == python-projects && viewItem == python-workspace"
+                }
+            ],
+            "view/title": [
+                {
+                    "command": "python-envs.addPythonProject",
+                    "group": "navigation",
+                    "when": "view == python-projects"
+                },
+                {
+                    "command": "python-envs.createAny",
+                    "group": "navigation",
+                    "when": "view == env-managers"
+                },
+                {
+                    "command": "python-envs.refreshAllManagers",
+                    "group": "navigation",
+                    "when": "view == env-managers"
+                }
+            ],
+            "explorer/context": [
+                {
+                    "command": "python-envs.addPythonProject",
+                    "group": "inline",
+                    "when": "explorerViewletVisible && explorerResourceIsFolder"
+                },
+                {
+                    "command": "python-envs.addPythonProject",
+                    "group": "inline",
+                    "when": "explorerViewletVisible && resourceExtname == .py"
+                }
+            ],
+            "editor/title/run": [
+                {
+                    "command": "python-envs.runAsTask",
+                    "group": "Python",
+                    "when": "editorLangId == python"
+                }
+            ]
+        },
+        "viewsContainers": {
+            "activitybar": [
+                {
+                    "id": "python-environments",
+                    "title": "Python Environments",
+                    "icon": "files/logo.svg"
+                }
+            ]
+        },
+        "views": {
+            "python-environments": [
+                {
+                    "id": "python-projects",
+                    "name": "Python Projects",
+                    "icon": "files/logo.svg",
+                    "contextualTitle": "Workspace Environment"
+                },
+                {
+                    "id": "env-managers",
+                    "name": "Environment Managers",
+                    "icon": "files/logo.svg",
+                    "contextualTitle": "Environment Manager"
+                }
+            ]
+        },
+        "taskDefinitions": [
+            {
+                "type": "python"
+            }
+        ]
+    },
+    "scripts": {
+        "vscode:prepublish": "npm run package",
+        "compile": "webpack",
+        "watch": "webpack --watch",
+        "package": "webpack --mode production --devtool source-map --config ./webpack.config.js",
+        "compile-tests": "tsc -p . --outDir out",
+        "watch-tests": "tsc -p . -w --outDir out",
+        "pretest": "npm run compile-tests && npm run compile && npm run lint",
+        "lint": "eslint src --ext ts",
+        "test": "node ./out/test/runTest.js",
+        "vsce-package": "vsce package -o ms-python-envs-insiders.vsix"
+    },
+    "devDependencies": {
+        "@types/fs-extra": "^11.0.4",
+        "@types/glob": "^8.1.0",
+        "@types/mocha": "^10.0.1",
+        "@types/node": "20.2.5",
+        "@types/stack-trace": "0.0.29",
+        "@types/vscode": "^1.93.0",
+        "@types/which": "^3.0.4",
+        "@typescript-eslint/eslint-plugin": "^5.59.8",
+        "@typescript-eslint/parser": "^5.59.8",
+        "@vscode/test-electron": "^2.3.2",
+        "@vscode/vsce": "^2.24.0",
+        "eslint": "^8.41.0",
+        "glob": "^8.1.0",
+        "mocha": "^10.2.0",
+        "ts-loader": "^9.4.3",
+        "typescript": "^5.1.3",
+        "webpack": "^5.85.0",
+        "webpack-cli": "^5.1.1"
+    },
+    "dependencies": {
+        "@iarna/toml": "^2.2.5",
+        "@vscode/test-cli": "^0.0.10",
+        "fs-extra": "^11.2.0",
+        "stack-trace": "0.0.10",
+        "vscode-jsonrpc": "^9.0.0-next.5",
+        "which": "^4.0.0"
+    }
+}
