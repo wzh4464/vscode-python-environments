@@ -1,0 +1,377 @@
+import { LogOutputChannel, ProgressLocation, RelativePattern, Uri, window } from 'vscode';
+import {
+    EnvironmentManager,
+    Installable,
+    PythonCommandRunConfiguration,
+    PythonEnvironment,
+    PythonEnvironmentApi,
+    PythonProject,
+    TerminalShellType,
+} from '../../api';
+import * as tomljs from '@iarna/toml';
+import * as path from 'path';
+import * as os from 'os';
+import * as fsapi from 'fs-extra';
+import { isUvInstalled, runPython, runUV } from './utils';
+import { ENVS_EXTENSION_ID, EXTENSION_ROOT_DIR } from '../../common/constants';
+import {
+    isNativeEnvInfo,
+    NativeEnvInfo,
+    NativePythonEnvironmentKind,
+    NativePythonFinder,
+} from '../common/nativePythonFinder';
+import { pickEnvironmentFrom } from '../../common/pickers';
+import { getWorkspacePersistentState } from '../../common/persistentState';
+import { shortVersion, sortEnvironments } from '../common/utils';
+import { findFiles } from '../../common/workspace.apis';
+
+export const VENV_WORKSPACE_KEY = `${ENVS_EXTENSION_ID}:venv:WORKSPACE_SELECTED`;
+export const VENV_GLOBAL_KEY = `${ENVS_EXTENSION_ID}:venv:GLOBAL_SELECTED`;
+
+export async function clearVenvCache(): Promise<void> {
+    const keys = [VENV_WORKSPACE_KEY, VENV_GLOBAL_KEY];
+    const state = await getWorkspacePersistentState();
+    await state.clear(keys);
+}
+
+export async function getVenvForWorkspace(fsPath: string): Promise<string | undefined> {
+    const state = await getWorkspacePersistentState();
+    const data: { [key: string]: string } | undefined = await state.get(VENV_WORKSPACE_KEY);
+    if (data) {
+        try {
+            return data[fsPath];
+        } catch {
+            return undefined;
+        }
+    }
+    return undefined;
+}
+
+export async function setVenvForWorkspace(fsPath: string, envPath: string | undefined): Promise<void> {
+    const state = await getWorkspacePersistentState();
+    const data: { [key: string]: string } = (await state.get(VENV_WORKSPACE_KEY)) ?? {};
+    if (envPath) {
+        data[fsPath] = envPath;
+    } else {
+        delete data[fsPath];
+    }
+    await state.set(VENV_WORKSPACE_KEY, data);
+}
+
+export async function getVenvForGlobal(): Promise<string | undefined> {
+    const state = await getWorkspacePersistentState();
+    return await state.get(VENV_GLOBAL_KEY);
+}
+
+export async function setVenvForGlobal(envPath: string | undefined): Promise<void> {
+    const state = await getWorkspacePersistentState();
+    await state.set(VENV_GLOBAL_KEY, envPath);
+}
+
+function getName(binPath: string): string {
+    const dir1 = path.dirname(binPath);
+    if (dir1.endsWith('bin') || dir1.endsWith('Scripts') || dir1.endsWith('scripts')) {
+        return path.basename(path.dirname(dir1));
+    }
+    return path.basename(dir1);
+}
+
+export async function findVirtualEnvironments(
+    hardRefresh: boolean,
+    nativeFinder: NativePythonFinder,
+    api: PythonEnvironmentApi,
+    log: LogOutputChannel,
+    manager: EnvironmentManager,
+    uris?: Uri[],
+): Promise<PythonEnvironment[]> {
+    const collection: PythonEnvironment[] = [];
+    const data = await nativeFinder.refresh(hardRefresh, uris);
+    const envs = data
+        .filter((e) => isNativeEnvInfo(e))
+        .map((e) => e as NativeEnvInfo)
+        .filter((e) => e.kind === NativePythonEnvironmentKind.venv);
+
+    envs.forEach((e) => {
+        if (!(e.prefix && e.executable && e.version)) {
+            log.warn(`Invalid conda environment: ${JSON.stringify(e)}`);
+            return;
+        }
+
+        const venvName = e.name ?? getName(e.executable);
+        const sv = shortVersion(e.version);
+        const name = `${venvName} (${sv})`;
+
+        const binDir = path.dirname(e.executable);
+
+        const shellActivation: Map<TerminalShellType, PythonCommandRunConfiguration[]> = new Map();
+        shellActivation.set(TerminalShellType.bash, [{ executable: 'source', args: [path.join(binDir, 'activate')] }]);
+        shellActivation.set(TerminalShellType.powershell, [{ executable: path.join(binDir, 'Activate.ps1') }]);
+        shellActivation.set(TerminalShellType.commandPrompt, [{ executable: path.join(binDir, 'activate.bat') }]);
+        shellActivation.set(TerminalShellType.unknown, [{ executable: path.join(binDir, 'activate') }]);
+
+        const shellDeactivation = new Map<TerminalShellType, PythonCommandRunConfiguration[]>();
+        shellDeactivation.set(TerminalShellType.bash, [{ executable: 'deactivate' }]);
+        shellDeactivation.set(TerminalShellType.powershell, [{ executable: 'deactivate' }]);
+        shellDeactivation.set(TerminalShellType.commandPrompt, [{ executable: path.join(binDir, 'deactivate.bat') }]);
+        shellActivation.set(TerminalShellType.unknown, [{ executable: 'deactivate' }]);
+
+        const env = api.createPythonEnvironmentItem(
+            {
+                name: name,
+                displayName: name,
+                shortDisplayName: `${sv} (${venvName})`,
+                displayPath: e.executable,
+                version: e.version,
+                description: e.executable,
+                environmentPath: Uri.file(e.executable),
+                iconPath: Uri.file(path.join(EXTENSION_ROOT_DIR, 'files', 'logo.svg')),
+                sysPrefix: e.prefix,
+                execInfo: {
+                    run: {
+                        executable: e.executable,
+                    },
+                    activatedRun: {
+                        executable: e.executable,
+                    },
+                    shellActivation,
+                    shellDeactivation,
+                },
+            },
+            manager,
+        );
+        collection.push(env);
+        log.info(`Found venv environment: ${name}`);
+    });
+    return collection;
+}
+
+export async function createPythonVenv(
+    nativeFinder: NativePythonFinder,
+    api: PythonEnvironmentApi,
+    log: LogOutputChannel,
+    manager: EnvironmentManager,
+    basePythons: PythonEnvironment[],
+    project: PythonProject,
+): Promise<PythonEnvironment | undefined> {
+    const filtered = basePythons.filter((e) => e.execInfo);
+    if (filtered.length === 0) {
+        log.error('No base python found');
+        window.showErrorMessage('No base python found');
+        return;
+    }
+
+    const basePython = await pickEnvironmentFrom(sortEnvironments(filtered));
+    if (!basePython || !basePython.execInfo) {
+        log.error('No base python selected, cannot create virtual environment.');
+        window.showErrorMessage('No base python selected, cannot create virtual environment.');
+        return;
+    }
+
+    const name = await window.showInputBox({
+        prompt: 'Enter name for virtual environment',
+        value: '.venv',
+        ignoreFocusOut: true,
+    });
+    if (!name) {
+        log.error('No name entered, cannot create virtual environment.');
+        window.showErrorMessage('No name entered, cannot create virtual environment.');
+        return;
+    }
+
+    const envPath = path.join(project.uri.fsPath, name);
+    const pythonPath =
+        os.platform() === 'win32' ? path.join(envPath, 'Scripts', 'python.exe') : path.join(envPath, 'bin', 'python');
+
+    return await window.withProgress(
+        {
+            location: ProgressLocation.Notification,
+            title: 'Creating virtual environment',
+        },
+        async () => {
+            try {
+                const useUv = await isUvInstalled(log);
+                if (basePython.execInfo?.run.executable) {
+                    if (useUv) {
+                        await runUV(
+                            ['venv', '--verbose', '--seed', '--python', basePython.execInfo?.run.executable, name],
+                            project.uri.fsPath,
+                            log,
+                        );
+                    } else {
+                        await runPython(
+                            basePython.execInfo.run.executable,
+                            ['-m', 'venv', name],
+                            project.uri.fsPath,
+                            manager.log,
+                        );
+                    }
+                    if (!(await fsapi.pathExists(pythonPath))) {
+                        log.error('no python executable found in virtual environment');
+                        throw new Error('no python executable found in virtual environment');
+                    }
+                }
+
+                const resolved = await nativeFinder.resolve(pythonPath);
+                if (resolved.version && resolved.executable && resolved.prefix) {
+                    const sv = shortVersion(resolved.version);
+                    const env = api.createPythonEnvironmentItem(
+                        {
+                            name: `${name} (${sv})`,
+                            displayName: `${name} (${sv})`,
+                            shortDisplayName: `${name}:${sv}`,
+                            displayPath: pythonPath,
+                            version: resolved.version,
+                            description: pythonPath,
+                            environmentPath: Uri.file(pythonPath),
+                            iconPath: Uri.file(path.join(EXTENSION_ROOT_DIR, 'files', 'logo.svg')),
+                            sysPrefix: resolved.prefix,
+                            execInfo: {
+                                run: {
+                                    executable: pythonPath,
+                                    args: [],
+                                },
+                            },
+                        },
+                        manager,
+                    );
+                    log.info(`Created venv environment: ${name}`);
+                    return env;
+                } else {
+                    throw new Error('Could not resolve the virtual environment');
+                }
+            } catch (e) {
+                log.error(`Failed to create virtual environment: ${e}`);
+                window.showErrorMessage(`Failed to create virtual environment`);
+                return;
+            }
+        },
+    );
+}
+
+export async function removeVenv(environment: PythonEnvironment, log: LogOutputChannel): Promise<boolean> {
+    const pythonPath = os.platform() === 'win32' ? 'python.exe' : 'python';
+
+    const envPath = environment.environmentPath.fsPath.endsWith(pythonPath)
+        ? path.dirname(path.dirname(environment.environmentPath.fsPath))
+        : environment.environmentPath.fsPath;
+
+    const confirm = await window.showWarningMessage(`Are you sure you want to remove ${envPath}?`, 'Yes', 'No');
+    if (confirm === 'Yes') {
+        await window.withProgress(
+            {
+                location: ProgressLocation.Notification,
+                title: 'Removing virtual environment',
+            },
+            async () => {
+                try {
+                    await fsapi.remove(envPath);
+                    return true;
+                } catch (e) {
+                    log.error(`Failed to remove virtual environment: ${e}`);
+                    return false;
+                }
+            },
+        );
+    }
+
+    return false;
+}
+
+function tomlParse(content: string, log?: LogOutputChannel): tomljs.JsonMap {
+    try {
+        return tomljs.parse(content);
+    } catch (err) {
+        log?.error('Failed to parse `pyproject.toml`:', err);
+    }
+    return {};
+}
+
+function isPipInstallableToml(toml: tomljs.JsonMap): boolean {
+    return toml['build-system'] !== undefined && toml.project !== undefined;
+}
+
+function getTomlInstallable(toml: tomljs.JsonMap, tomlPath: Uri): Installable[] {
+    const extras: Installable[] = [];
+
+    if (isPipInstallableToml(toml)) {
+        extras.push({
+            displayName: 'Editable',
+            description: 'Install project as editable',
+            group: 'Toml',
+            args: ['-e', path.dirname(tomlPath.fsPath)],
+            uri: tomlPath,
+        });
+    }
+
+    if (toml.project && (toml.project as tomljs.JsonMap)['optional-dependencies']) {
+        const deps = (toml.project as tomljs.JsonMap)['optional-dependencies'];
+        for (const key of Object.keys(deps)) {
+            extras.push({
+                displayName: key,
+                group: 'Toml',
+                args: ['-e', `.[${key}]`],
+                uri: tomlPath,
+            });
+        }
+    }
+    return extras;
+}
+
+export async function getProjectInstallable(
+    api: PythonEnvironmentApi,
+    project?: PythonProject,
+): Promise<Installable[]> {
+    if (!project) {
+        return [];
+    }
+    const exclude = '**/{.venv*,.git,.nox,.tox,.conda,site-packages,__pypackages__}/**';
+    const installable: Installable[] = [];
+    await window.withProgress(
+        {
+            location: ProgressLocation.Window,
+            title: 'Searching dependencies',
+        },
+        async (progress, token) => {
+            progress.report({ message: 'Searching for requirements files' });
+            const results1 = await findFiles(
+                new RelativePattern(project.uri, '**/*requirements*.txt'),
+                exclude,
+                undefined,
+                token,
+            );
+            const results2 = await findFiles(
+                new RelativePattern(project.uri, '**/requirements/*.txt'),
+                exclude,
+                undefined,
+                token,
+            );
+            [...results1, ...results2].forEach((uri) => {
+                const p = api.getPythonProject(uri);
+                if (p?.uri.fsPath === project.uri.fsPath) {
+                    installable.push({
+                        uri,
+                        displayName: path.basename(uri.fsPath),
+                        group: 'requirements',
+                        args: ['-r', uri.fsPath],
+                    });
+                }
+            });
+
+            progress.report({ message: 'Searching for `pyproject.toml` file' });
+            const results3 = await findFiles(
+                new RelativePattern(project.uri, '**/pyproject.toml'),
+                exclude,
+                undefined,
+                token,
+            );
+            results3.filter((uri) => api.getPythonProject(uri)?.uri.fsPath === project.uri.fsPath);
+            await Promise.all(
+                results3.map(async (uri) => {
+                    const toml = tomlParse(await fsapi.readFile(uri.fsPath, 'utf-8'));
+                    installable.push(...getTomlInstallable(toml, uri));
+                }),
+            );
+        },
+    );
+    return installable;
+}

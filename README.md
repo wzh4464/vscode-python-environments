@@ -1,14 +1,38 @@
-# Project
+# Python Environments and Package Manager (preview)
 
-> This repo has been populated by an initial template to help get you started. Please
-> make sure to update the content to build a great experience for community-building.
+## Overview
 
-As the maintainer of this project, please make a few updates:
+Python Environments and Package Manager is a VS Code extension that helps users manage their Python environments and package management. It is a preview extension and the APIs and features are subject to change as the project evolves.
 
-- Improving this README.MD file to provide a great experience
-- Updating SUPPORT.MD with content about this project's support experience
-- Understanding the security reporting process in SECURITY.MD
-- Remove this section from the README
+## Features
+
+### Environment Management
+
+This extension provides an environment view for the user to manage their Python environments. The user can create, delete, and switch between environments. The user can also install and uninstall packages in the current environment. This extension provides APIs for extension developers to contribute environment managers.
+
+The extension by uses `venv` as the default environment manager. You can change this by setting the `python-envs.defaultEnvManager` setting to a different environment manager. Following are the out of the box environment managers:
+
+|Id| name |Description|
+|---|----|--|
+|ms-python.python:venv| `venv` |The default environment manager. It is a built-in environment manager provided by the Python standard library.|
+|ms-python.python:system| System Installed Python | These are python installs on your system. Installed either with your OS, or from python.org, or any other OS package manager |
+|ms-python.python:conda| `conda` |The conda environment manager. It is a popular environment manager for Python.|
+
+
+### Package Management
+
+This extension provides a package view for the user to manage their Python packages. The user can install and uninstall packages in the any environment. This extension provides APIs for extension developers to contribute package managers.
+
+The extension by uses `pip` as the default package manager. You can change this by setting the `python-envs.defaultPackageManager` setting to a different package manager. Following are the out of the box package managers:
+
+|Id| name |Description|
+|---|----|--|
+|ms-python.python:pip| `pip` |The default package manager. It is a built-in package manager provided by the Python standard library.|
+|ms-python.python:conda| `conda` |The conda package manager. It is a popular package manager for Python.|
+
+## API Reference
+
+See the `src\api.ts` for the full list of APIs.
 
 ## Contributing
 
