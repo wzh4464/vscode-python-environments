@@ -4,6 +4,9 @@ import {
     ExtensionTerminalOptions,
     InputBox,
     InputBoxOptions,
+    OpenDialogOptions,
+    Progress,
+    ProgressOptions,
     QuickInputButton,
     QuickInputButtons,
     QuickPick,
@@ -36,6 +39,10 @@ export function onDidChangeTerminalShellIntegration(
     disposables?: Disposable[],
 ): Disposable {
     return window.onDidChangeTerminalShellIntegration(listener, thisArgs, disposables);
+}
+
+export function showOpenDialog(options?: OpenDialogOptions): Thenable<Uri[] | undefined> {
+    return window.showOpenDialog(options);
 }
 
 export function terminals(): readonly Terminal[] {
@@ -77,6 +84,27 @@ export function showTextDocument(uri: Uri): Thenable<TextEditor> {
 export interface QuickPickButtonEvent<T extends QuickPickItem> {
     readonly item: T | readonly T[] | undefined;
     readonly button: QuickInputButton;
+}
+
+export function showQuickPick<T extends QuickPickItem>(
+    items: readonly T[] | Thenable<readonly T[]>,
+    options?: QuickPickOptions,
+    token?: CancellationToken,
+): Thenable<T | undefined> {
+    return window.showQuickPick(items, options, token);
+}
+
+export function withProgress<R>(
+    options: ProgressOptions,
+    task: (
+        progress: Progress<{
+            message?: string;
+            increment?: number;
+        }>,
+        token: CancellationToken,
+    ) => Thenable<R>,
+): Thenable<R> {
+    return window.withProgress(options, task);
 }
 
 export async function showQuickPickWithButtons<T extends QuickPickItem>(
@@ -213,4 +241,12 @@ export async function showInputBoxWithButtons(
     } finally {
         disposables.forEach((d) => d.dispose());
     }
+}
+
+export function showWarningMessage(message: string, ...items: string[]): Thenable<string | undefined> {
+    return window.showWarningMessage(message, ...items);
+}
+
+export function showInputBox(options?: InputBoxOptions, token?: CancellationToken): Thenable<string | undefined> {
+    return window.showInputBox(options, token);
 }

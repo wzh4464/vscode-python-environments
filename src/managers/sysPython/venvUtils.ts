@@ -1,18 +1,20 @@
-import { LogOutputChannel, ProgressLocation, Uri, window } from 'vscode';
+import { LogOutputChannel, ProgressLocation, QuickPickItem, QuickPickItemKind, Uri } from 'vscode';
 import {
     EnvironmentManager,
     Installable,
     PythonCommandRunConfiguration,
     PythonEnvironment,
     PythonEnvironmentApi,
+    PythonEnvironmentInfo,
     PythonProject,
+    ResolveEnvironmentContext,
     TerminalShellType,
 } from '../../api';
 import * as tomljs from '@iarna/toml';
 import * as path from 'path';
 import * as os from 'os';
 import * as fsapi from 'fs-extra';
-import { isUvInstalled, runPython, runUV } from './utils';
+import { isUvInstalled, resolveSystemPythonEnvironmentPath, runPython, runUV } from './utils';
 import { ENVS_EXTENSION_ID, EXTENSION_ROOT_DIR } from '../../common/constants';
 import {
     isNativeEnvInfo,
@@ -20,10 +22,18 @@ import {
     NativePythonEnvironmentKind,
     NativePythonFinder,
 } from '../common/nativePythonFinder';
-import { pickEnvironmentFrom } from '../../common/pickers';
 import { getWorkspacePersistentState } from '../../common/persistentState';
 import { shortVersion, sortEnvironments } from '../common/utils';
-import { findFiles } from '../../common/workspace.apis';
+import { findFiles, getConfiguration } from '../../common/workspace.apis';
+import { pickEnvironmentFrom } from '../../common/pickers/environments';
+import {
+    showQuickPick,
+    withProgress,
+    showWarningMessage,
+    showInputBox,
+    showOpenDialog,
+} from '../../common/window.apis';
+import { showErrorMessage } from '../../common/errors/utils';
 
 export const VENV_WORKSPACE_KEY = `${ENVS_EXTENSION_ID}:venv:WORKSPACE_SELECTED`;
 export const VENV_GLOBAL_KEY = `${ENVS_EXTENSION_ID}:venv:GLOBAL_SELECTED`;
@@ -35,6 +45,10 @@ export async function clearVenvCache(): Promise<void> {
 }
 
 export async function getVenvForWorkspace(fsPath: string): Promise<string | undefined> {
+    if (process.env.VIRTUAL_ENV) {
+        return process.env.VIRTUAL_ENV;
+    }
+
     const state = await getWorkspacePersistentState();
     const data: { [key: string]: string } | undefined = await state.get(VENV_WORKSPACE_KEY);
     if (data) {
@@ -76,6 +90,52 @@ function getName(binPath: string): string {
     return path.basename(dir1);
 }
 
+function getPythonInfo(env: NativeEnvInfo): PythonEnvironmentInfo {
+    if (env.executable && env.version && env.prefix) {
+        const venvName = env.name ?? getName(env.executable);
+        const sv = shortVersion(env.version);
+        const name = `${venvName} (${sv})`;
+
+        const binDir = path.dirname(env.executable);
+
+        const shellActivation: Map<TerminalShellType, PythonCommandRunConfiguration[]> = new Map();
+        shellActivation.set(TerminalShellType.bash, [{ executable: 'source', args: [path.join(binDir, 'activate')] }]);
+        shellActivation.set(TerminalShellType.powershell, [{ executable: path.join(binDir, 'Activate.ps1') }]);
+        shellActivation.set(TerminalShellType.commandPrompt, [{ executable: path.join(binDir, 'activate.bat') }]);
+        shellActivation.set(TerminalShellType.unknown, [{ executable: path.join(binDir, 'activate') }]);
+
+        const shellDeactivation = new Map<TerminalShellType, PythonCommandRunConfiguration[]>();
+        shellDeactivation.set(TerminalShellType.bash, [{ executable: 'deactivate' }]);
+        shellDeactivation.set(TerminalShellType.powershell, [{ executable: 'deactivate' }]);
+        shellDeactivation.set(TerminalShellType.commandPrompt, [{ executable: path.join(binDir, 'deactivate.bat') }]);
+        shellActivation.set(TerminalShellType.unknown, [{ executable: 'deactivate' }]);
+
+        return {
+            name: name,
+            displayName: name,
+            shortDisplayName: `${sv} (${venvName})`,
+            displayPath: env.executable,
+            version: env.version,
+            description: env.executable,
+            environmentPath: Uri.file(env.executable),
+            iconPath: Uri.file(path.join(EXTENSION_ROOT_DIR, 'files', '__icon__.py')),
+            sysPrefix: env.prefix,
+            execInfo: {
+                run: {
+                    executable: env.executable,
+                },
+                activatedRun: {
+                    executable: env.executable,
+                },
+                shellActivation,
+                shellDeactivation,
+            },
+        };
+    } else {
+        throw new Error(`Invalid python info: ${JSON.stringify(env)}`);
+    }
+}
+
 export async function findVirtualEnvironments(
     hardRefresh: boolean,
     nativeFinder: NativePythonFinder,
@@ -97,52 +157,79 @@ export async function findVirtualEnvironments(
             return;
         }
 
-        const venvName = e.name ?? getName(e.executable);
-        const sv = shortVersion(e.version);
-        const name = `${venvName} (${sv})`;
-
-        const binDir = path.dirname(e.executable);
-
-        const shellActivation: Map<TerminalShellType, PythonCommandRunConfiguration[]> = new Map();
-        shellActivation.set(TerminalShellType.bash, [{ executable: 'source', args: [path.join(binDir, 'activate')] }]);
-        shellActivation.set(TerminalShellType.powershell, [{ executable: path.join(binDir, 'Activate.ps1') }]);
-        shellActivation.set(TerminalShellType.commandPrompt, [{ executable: path.join(binDir, 'activate.bat') }]);
-        shellActivation.set(TerminalShellType.unknown, [{ executable: path.join(binDir, 'activate') }]);
-
-        const shellDeactivation = new Map<TerminalShellType, PythonCommandRunConfiguration[]>();
-        shellDeactivation.set(TerminalShellType.bash, [{ executable: 'deactivate' }]);
-        shellDeactivation.set(TerminalShellType.powershell, [{ executable: 'deactivate' }]);
-        shellDeactivation.set(TerminalShellType.commandPrompt, [{ executable: path.join(binDir, 'deactivate.bat') }]);
-        shellActivation.set(TerminalShellType.unknown, [{ executable: 'deactivate' }]);
-
-        const env = api.createPythonEnvironmentItem(
-            {
-                name: name,
-                displayName: name,
-                shortDisplayName: `${sv} (${venvName})`,
-                displayPath: e.executable,
-                version: e.version,
-                description: e.executable,
-                environmentPath: Uri.file(e.executable),
-                iconPath: Uri.file(path.join(EXTENSION_ROOT_DIR, 'files', 'logo.svg')),
-                sysPrefix: e.prefix,
-                execInfo: {
-                    run: {
-                        executable: e.executable,
-                    },
-                    activatedRun: {
-                        executable: e.executable,
-                    },
-                    shellActivation,
-                    shellDeactivation,
-                },
-            },
-            manager,
-        );
+        const env = api.createPythonEnvironmentItem(getPythonInfo(e), manager);
         collection.push(env);
-        log.info(`Found venv environment: ${name}`);
+        log.info(`Found venv environment: ${env.name}`);
     });
     return collection;
+}
+
+function getVenvFoldersSetting(): string[] {
+    const settings = getConfiguration('python');
+    return settings.get<string[]>('venvFolders', []);
+}
+
+interface FolderQuickPickItem extends QuickPickItem {
+    uri?: Uri;
+}
+export async function getGlobalVenvLocation(): Promise<Uri | undefined> {
+    const items: FolderQuickPickItem[] = [
+        {
+            label: 'Browse',
+            description: 'Select a folder to create a global virtual environment',
+        },
+    ];
+
+    const venvPaths = getVenvFoldersSetting();
+    if (venvPaths.length > 0) {
+        items.push(
+            {
+                label: 'Venv Folders Setting',
+                kind: QuickPickItemKind.Separator,
+            },
+            ...venvPaths.map((p) => ({
+                label: path.basename(p),
+                description: path.resolve(p),
+                uri: Uri.file(path.resolve(p)),
+            })),
+        );
+    }
+
+    if (process.env.WORKON_HOME) {
+        items.push(
+            {
+                label: 'Virtualenvwrapper',
+                kind: QuickPickItemKind.Separator,
+            },
+            {
+                label: 'WORKON_HOME',
+                description: process.env.WORKON_HOME,
+                uri: Uri.file(process.env.WORKON_HOME),
+            },
+        );
+    }
+
+    const selected = await showQuickPick(items, {
+        placeHolder: 'Select a folder to create a global virtual environment',
+        ignoreFocusOut: true,
+    });
+
+    if (selected) {
+        if (selected.label === 'Browse') {
+            const result = await showOpenDialog({
+                canSelectFiles: false,
+                canSelectFolders: true,
+                canSelectMany: false,
+                openLabel: 'Select Folder',
+            });
+            if (result && result.length > 0) {
+                return result[0];
+            }
+        } else if (selected.uri) {
+            return selected.uri;
+        }
+    }
+    return undefined;
 }
 
 export async function createPythonVenv(
@@ -151,38 +238,46 @@ export async function createPythonVenv(
     log: LogOutputChannel,
     manager: EnvironmentManager,
     basePythons: PythonEnvironment[],
-    project: PythonProject,
+    venvRoot: Uri,
 ): Promise<PythonEnvironment | undefined> {
     const filtered = basePythons.filter((e) => e.execInfo);
     if (filtered.length === 0) {
         log.error('No base python found');
-        window.showErrorMessage('No base python found');
+        showErrorMessage('No base python found');
         return;
     }
 
     const basePython = await pickEnvironmentFrom(sortEnvironments(filtered));
     if (!basePython || !basePython.execInfo) {
         log.error('No base python selected, cannot create virtual environment.');
-        window.showErrorMessage('No base python selected, cannot create virtual environment.');
+        showErrorMessage('No base python selected, cannot create virtual environment.');
         return;
     }
 
-    const name = await window.showInputBox({
+    const name = await showInputBox({
         prompt: 'Enter name for virtual environment',
         value: '.venv',
         ignoreFocusOut: true,
+        validateInput: async (value) => {
+            if (!value) {
+                return 'Name cannot be empty';
+            }
+            if (await fsapi.pathExists(path.join(venvRoot.fsPath, value))) {
+                return 'Virtual environment already exists';
+            }
+        },
     });
     if (!name) {
         log.error('No name entered, cannot create virtual environment.');
-        window.showErrorMessage('No name entered, cannot create virtual environment.');
+        showErrorMessage('No name entered, cannot create virtual environment.');
         return;
     }
 
-    const envPath = path.join(project.uri.fsPath, name);
+    const envPath = path.join(venvRoot.fsPath, name);
     const pythonPath =
         os.platform() === 'win32' ? path.join(envPath, 'Scripts', 'python.exe') : path.join(envPath, 'bin', 'python');
 
-    return await window.withProgress(
+    return await withProgress(
         {
             location: ProgressLocation.Notification,
             title: 'Creating virtual environment',
@@ -193,15 +288,15 @@ export async function createPythonVenv(
                 if (basePython.execInfo?.run.executable) {
                     if (useUv) {
                         await runUV(
-                            ['venv', '--verbose', '--seed', '--python', basePython.execInfo?.run.executable, name],
-                            project.uri.fsPath,
+                            ['venv', '--verbose', '--seed', '--python', basePython.execInfo?.run.executable, envPath],
+                            venvRoot.fsPath,
                             log,
                         );
                     } else {
                         await runPython(
                             basePython.execInfo.run.executable,
-                            ['-m', 'venv', name],
-                            project.uri.fsPath,
+                            ['-m', 'venv', envPath],
+                            venvRoot.fsPath,
                             manager.log,
                         );
                     }
@@ -241,7 +336,7 @@ export async function createPythonVenv(
                 }
             } catch (e) {
                 log.error(`Failed to create virtual environment: ${e}`);
-                window.showErrorMessage(`Failed to create virtual environment`);
+                showErrorMessage(`Failed to create virtual environment`);
                 return;
             }
         },
@@ -255,9 +350,9 @@ export async function removeVenv(environment: PythonEnvironment, log: LogOutputC
         ? path.dirname(path.dirname(environment.environmentPath.fsPath))
         : environment.environmentPath.fsPath;
 
-    const confirm = await window.showWarningMessage(`Are you sure you want to remove ${envPath}?`, 'Yes', 'No');
+    const confirm = await showWarningMessage(`Are you sure you want to remove ${envPath}?`, 'Yes', 'No');
     if (confirm === 'Yes') {
-        await window.withProgress(
+        await withProgress(
             {
                 location: ProgressLocation.Notification,
                 title: 'Removing virtual environment',
@@ -326,7 +421,7 @@ export async function getProjectInstallable(
     }
     const exclude = '**/{.venv*,.git,.nox,.tox,.conda,site-packages,__pypackages__}/**';
     const installable: Installable[] = [];
-    await window.withProgress(
+    await withProgress(
         {
             location: ProgressLocation.Window,
             title: 'Searching dependencies',
@@ -367,4 +462,33 @@ export async function getProjectInstallable(
         },
     );
     return installable;
+}
+
+export async function resolveVenvPythonEnvironment(
+    context: ResolveEnvironmentContext,
+    nativeFinder: NativePythonFinder,
+    api: PythonEnvironmentApi,
+    manager: EnvironmentManager,
+    baseManager: EnvironmentManager,
+): Promise<PythonEnvironment | undefined> {
+    const fsPath = context instanceof Uri ? context.fsPath : context.environmentPath.fsPath;
+    const resolved = await resolveVenvPythonEnvironmentPath(fsPath, nativeFinder, api, manager, baseManager);
+    return resolved;
+}
+
+export async function resolveVenvPythonEnvironmentPath(
+    fsPath: string,
+    nativeFinder: NativePythonFinder,
+    api: PythonEnvironmentApi,
+    manager: EnvironmentManager,
+    baseManager: EnvironmentManager,
+): Promise<PythonEnvironment | undefined> {
+    const resolved = await nativeFinder.resolve(fsPath);
+
+    if (resolved.kind === NativePythonEnvironmentKind.venv) {
+        const envInfo = getPythonInfo(resolved);
+        return api.createPythonEnvironmentItem(envInfo, manager);
+    }
+
+    return resolveSystemPythonEnvironmentPath(fsPath, nativeFinder, api, baseManager);
 }
