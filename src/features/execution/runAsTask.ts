@@ -1,15 +1,29 @@
-import { ShellExecution, Task, TaskExecution, TaskPanelKind, TaskRevealKind, TaskScope, WorkspaceFolder } from 'vscode';
-import { PythonTaskExecutionOptions } from '../../internal.api';
+import {
+    ShellExecution,
+    Task,
+    TaskExecution,
+    TaskPanelKind,
+    TaskRevealKind,
+    TaskScope,
+    Uri,
+    WorkspaceFolder,
+} from 'vscode';
+import { PythonTaskExecutionOptions } from '../../api';
 import { getWorkspaceFolder } from '../../common/workspace.apis';
 import { PythonEnvironment } from '../../api';
 import { executeTask } from '../../common/tasks.apis';
 
+function getWorkspaceFolderOrDefault(uri?: Uri): WorkspaceFolder | TaskScope {
+    const workspace = uri ? getWorkspaceFolder(uri) : undefined;
+    return workspace ?? TaskScope.Global;
+}
+
 export async function runAsTask(
-    options: PythonTaskExecutionOptions,
     environment: PythonEnvironment,
+    options: PythonTaskExecutionOptions,
     extra?: { reveal?: TaskRevealKind },
 ): Promise<TaskExecution> {
-    const workspace: WorkspaceFolder | TaskScope = getWorkspaceFolder(options.project.uri) ?? TaskScope.Global;
+    const workspace: WorkspaceFolder | TaskScope = getWorkspaceFolderOrDefault(options.project?.uri);
 
     const executable =
         environment.execInfo?.activatedRun?.executable ?? environment.execInfo?.run.executable ?? 'python';
@@ -30,9 +44,8 @@ export async function runAsTask(
         echo: true,
         panel: TaskPanelKind.Shared,
         close: false,
-        showReuseMessage: false,
+        showReuseMessage: true,
     };
 
-    const execution = await executeTask(task);
-    return execution;
+    return executeTask(task);
 }
