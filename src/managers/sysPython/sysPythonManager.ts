@@ -154,8 +154,8 @@ export class SysPythonManager implements EnvironmentManager {
 
     async resolve(context: ResolveEnvironmentContext): Promise<PythonEnvironment | undefined> {
         if (context instanceof Uri) {
-            // NOTE: `environmentPath` for envs in `this.collection` for venv always points to the python
-            // executable in the venv. This is set when we create the PythonEnvironment object.
+            // NOTE: `environmentPath` for envs in `this.collection` for system envs always points to the python
+            // executable. This is set when we create the PythonEnvironment object.
             const found = this.findEnvironmentByPath(context.fsPath);
             if (found) {
                 // If it is in the collection, then it is a venv, and it should already be fully resolved.
@@ -182,6 +182,10 @@ export class SysPythonManager implements EnvironmentManager {
         if (resolved) {
             // This is just like finding a new environment or creating a new one.
             // Add it to collection, and trigger the added event.
+
+            // For all other env types we need to ensure that the environment is of the type managed by the manager.
+            // But System is a exception, this is the last resort for resolving. So we don't need to check.
+            // We will just add it and treat it as a non-activatable environment.
             this.collection.push(resolved);
             this._onDidChangeEnvironments.fire([{ environment: resolved, kind: EnvironmentChangeKind.add }]);
         }
@@ -247,7 +251,7 @@ export class SysPythonManager implements EnvironmentManager {
             const env = await getSystemEnvForWorkspace(p);
 
             if (env) {
-                const found = this.findEnvironmentByPath(p);
+                const found = this.findEnvironmentByPath(env);
 
                 if (found) {
                     this.fsPathToEnv.set(p, found);
@@ -256,7 +260,7 @@ export class SysPythonManager implements EnvironmentManager {
                     const resolved = await resolveSystemPythonEnvironmentPath(env, this.nativeFinder, this.api, this);
 
                     if (resolved) {
-                        // If resolved add it to the collection
+                        // If resolved add it to the collection.
                         this.fsPathToEnv.set(p, resolved);
                         this.collection.push(resolved);
                     } else {

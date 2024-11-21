@@ -1,4 +1,4 @@
-import { window, commands, ExtensionContext, LogOutputChannel, TextEditor } from 'vscode';
+import { commands, ExtensionContext, LogOutputChannel } from 'vscode';
 
 import { PythonEnvironmentManagers } from './features/envManagers';
 import { registerLogger } from './common/logging';
@@ -28,9 +28,8 @@ import { PythonProjectManagerImpl } from './features/projectManager';
 import { EnvironmentManagers, ProjectCreators, PythonProjectManager } from './internal.api';
 import { getPythonApi, setPythonApi } from './features/pythonApi';
 import { setPersistentState } from './common/persistentState';
-import { isPythonProjectFile } from './common/utils/fileNameUtils';
 import { createNativePythonFinder, NativePythonFinder } from './managers/common/nativePythonFinder';
-import { PythonEnvironmentApi, PythonProject } from './api';
+import { PythonEnvironmentApi } from './api';
 import {
     ProjectCreatorsImpl,
     registerAutoProjectProvider,
@@ -39,20 +38,30 @@ import {
 import { WorkspaceView } from './features/views/projectView';
 import { registerCompletionProvider } from './features/settings/settingCompletions';
 import { TerminalManager, TerminalManagerImpl } from './features/terminal/terminalManager';
-import { activeTerminal, onDidChangeActiveTerminal, onDidChangeActiveTextEditor } from './common/window.apis';
+import {
+    activeTerminal,
+    createLogOutputChannel,
+    onDidChangeActiveTerminal,
+    onDidChangeActiveTextEditor,
+} from './common/window.apis';
 import {
     getEnvironmentForTerminal,
     setActivateMenuButtonContext,
     updateActivateMenuButtonContext,
 } from './features/terminal/activateMenuButton';
+import { PythonStatusBarImpl } from './features/views/pythonStatusBar';
+import { updateViewsAndStatus } from './features/views/revealHandler';
 
 export async function activate(context: ExtensionContext): Promise<PythonEnvironmentApi> {
     // Logging should be set up before anything else.
-    const outputChannel: LogOutputChannel = window.createOutputChannel('Python Environments', { log: true });
+    const outputChannel: LogOutputChannel = createLogOutputChannel('Python Environments');
     context.subscriptions.push(outputChannel, registerLogger(outputChannel));
 
     // Setup the persistent state for the extension.
     setPersistentState(context);
+
+    const statusBar = new PythonStatusBarImpl();
+    context.subscriptions.push(statusBar);
 
     const terminalManager: TerminalManager = new TerminalManagerImpl();
     context.subscriptions.push(terminalManager);
@@ -113,26 +122,14 @@ export async function activate(context: ExtensionContext): Promise<PythonEnviron
         commands.registerCommand('python-envs.set', async (item) => {
             const result = await setEnvironmentCommand(item, envManagers, projectManager);
             if (result) {
-                const projects: PythonProject[] = [];
-                result.forEach((r) => {
-                    if (r.project) {
-                        projects.push(r.project);
-                    }
-                });
-                workspaceView.updateProject(projects);
+                workspaceView.updateProject();
                 await updateActivateMenuButtonContext(terminalManager, projectManager, envManagers);
             }
         }),
         commands.registerCommand('python-envs.setEnv', async (item) => {
             const result = await setEnvironmentCommand(item, envManagers, projectManager);
             if (result) {
-                const projects: PythonProject[] = [];
-                result.forEach((r) => {
-                    if (r.project) {
-                        projects.push(r.project);
-                    }
-                });
-                workspaceView.updateProject(projects);
+                workspaceView.updateProject();
                 await updateActivateMenuButtonContext(terminalManager, projectManager, envManagers);
             }
         }),
@@ -193,38 +190,14 @@ export async function activate(context: ExtensionContext): Promise<PythonEnviron
         onDidChangeActiveTerminal(async (t) => {
             await updateActivateMenuButtonContext(terminalManager, projectManager, envManagers, t);
         }),
-        onDidChangeActiveTextEditor(async (e: TextEditor | undefined) => {
-            if (e && !e.document.isUntitled && e.document.uri.scheme === 'file') {
-                if (
-                    e.document.languageId === 'python' ||
-                    e.document.languageId === 'pip-requirements' ||
-                    isPythonProjectFile(e.document.uri.fsPath)
-                ) {
-                    const env = await workspaceView.reveal(e.document.uri);
-                    await managerView.reveal(env);
-                }
-            }
+        onDidChangeActiveTextEditor(async () => {
+            updateViewsAndStatus(statusBar, workspaceView, managerView, api);
         }),
-        envManagers.onDidChangeEnvironment(async (e) => {
-            const activeDocument = window.activeTextEditor?.document;
-            if (!activeDocument || activeDocument.isUntitled || activeDocument.uri.scheme !== 'file') {
-                return;
-            }
-
-            if (
-                activeDocument.languageId !== 'python' &&
-                activeDocument.languageId !== 'pip-requirements' &&
-                !isPythonProjectFile(activeDocument.uri.fsPath)
-            ) {
-                return;
-            }
-
-            const mgr1 = envManagers.getEnvironmentManager(e.uri);
-            const mgr2 = envManagers.getEnvironmentManager(activeDocument.uri);
-            if (mgr1 === mgr2 && e.new) {
-                const env = await workspaceView.reveal(activeDocument.uri);
-                await managerView.reveal(env);
-            }
+        envManagers.onDidChangeEnvironment(async () => {
+            updateViewsAndStatus(statusBar, workspaceView, managerView, api);
+        }),
+        envManagers.onDidChangeEnvironments(async () => {
+            updateViewsAndStatus(statusBar, workspaceView, managerView, api);
         }),
     );
 

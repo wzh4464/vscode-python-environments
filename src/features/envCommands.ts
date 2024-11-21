@@ -34,7 +34,11 @@ import {
 import { Common } from '../common/localize';
 import { pickEnvironment } from '../common/pickers/environments';
 import { pickEnvironmentManager, pickPackageManager, pickCreator } from '../common/pickers/managers';
-import { pickPackageOptions, getPackagesToInstall, getPackagesToUninstall } from '../common/pickers/packages';
+import {
+    pickPackageOptions,
+    getPackagesToInstallFromPackageManager,
+    getPackagesToUninstall,
+} from '../common/pickers/packages';
 import { pickProject, pickProjectMany } from '../common/pickers/projects';
 import { TerminalManager } from './terminal/terminalManager';
 import { runInTerminal } from './terminal/runInTerminal';
@@ -138,7 +142,7 @@ export async function handlePackagesCommand(
     if (action === Common.install) {
         if (!packages || packages.length === 0) {
             try {
-                packages = await getPackagesToInstall(packageManager, environment);
+                packages = await getPackagesToInstallFromPackageManager(packageManager, environment);
             } catch (ex: any) {
                 if (ex === QuickInputButtons.Back) {
                     return handlePackagesCommand(packageManager, environment, packages);
@@ -192,7 +196,7 @@ export async function setEnvironmentCommand(
         return;
     } else if (context instanceof ProjectItem) {
         const view = context as ProjectItem;
-        return setEnvironmentCommand(view.project.uri, em, wm);
+        return setEnvironmentCommand([view.project.uri], em, wm);
     } else if (context instanceof Uri) {
         return setEnvironmentCommand([context], em, wm);
     } else if (context === undefined) {
@@ -236,8 +240,8 @@ export async function setEnvironmentCommand(
             const settings: EditAllManagerSettings[] = [];
             uris.forEach((uri) => {
                 const m = em.getEnvironmentManager(uri);
+                promises.push(manager.set(uri, selected));
                 if (manager.id !== m?.id) {
-                    promises.push(manager.set(uri, selected));
                     settings.push({
                         project: wm.get(uri),
                         envManager: manager.id,

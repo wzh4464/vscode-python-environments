@@ -44,12 +44,15 @@ import { TerminalManager } from './terminal/terminalManager';
 import { runAsTask } from './execution/runAsTask';
 import { runInTerminal } from './terminal/runInTerminal';
 import { runInBackground } from './execution/runInBackground';
+import { setAllManagerSettings } from './settings/settingHelpers';
 
 class PythonEnvironmentApiImpl implements PythonEnvironmentApi {
     private readonly _onDidChangeEnvironments = new EventEmitter<DidChangeEnvironmentsEventArgs>();
     private readonly _onDidChangeEnvironment = new EventEmitter<DidChangeEnvironmentEventArgs>();
     private readonly _onDidChangePythonProjects = new EventEmitter<DidChangePythonProjectsEventArgs>();
     private readonly _onDidChangePackages = new EventEmitter<DidChangePackagesEventArgs>();
+
+    private readonly _previousEnvironments = new Map<string, PythonEnvironment | undefined>();
     constructor(
         private readonly envManagers: EnvironmentManagers,
         private readonly projectManager: PythonProjectManager,
@@ -159,18 +162,46 @@ class PythonEnvironmentApiImpl implements PythonEnvironmentApi {
     }
     onDidChangeEnvironments: Event<DidChangeEnvironmentsEventArgs> = this._onDidChangeEnvironments.event;
     async setEnvironment(scope: SetEnvironmentScope, environment?: PythonEnvironment): Promise<void> {
-        const manager = this.envManagers.getEnvironmentManager(scope);
+        const manager = environment
+            ? this.envManagers.getEnvironmentManager(environment.envId.managerId)
+            : this.envManagers.getEnvironmentManager(scope);
+
         if (!manager) {
             throw new Error('No environment manager found');
         }
         await manager.set(scope, environment);
+        if (scope) {
+            const project = this.projectManager.get(scope);
+            const packageManager = this.envManagers.getPackageManager(environment);
+            if (project && packageManager) {
+                await setAllManagerSettings([
+                    {
+                        project,
+                        envManager: manager.id,
+                        packageManager: packageManager.id,
+                    },
+                ]);
+            }
+        }
+
+        const oldEnv = this._previousEnvironments.get(scope?.toString() ?? 'global');
+        if (oldEnv?.envId.id !== environment?.envId.id) {
+            this._previousEnvironments.set(scope?.toString() ?? 'global', environment);
+            this._onDidChangeEnvironment.fire({ uri: scope, new: environment, old: oldEnv });
+        }
     }
-    async getEnvironment(context: GetEnvironmentScope): Promise<PythonEnvironment | undefined> {
-        const manager = this.envManagers.getEnvironmentManager(context);
+    async getEnvironment(scope: GetEnvironmentScope): Promise<PythonEnvironment | undefined> {
+        const manager = this.envManagers.getEnvironmentManager(scope);
         if (!manager) {
             return undefined;
         }
-        return await manager.get(context);
+        const oldEnv = this._previousEnvironments.get(scope?.toString() ?? 'global');
+        const newEnv = await manager.get(scope);
+        if (oldEnv?.envId.id !== newEnv?.envId.id) {
+            this._previousEnvironments.set(scope?.toString() ?? 'global', newEnv);
+            this._onDidChangeEnvironment.fire({ uri: scope, new: newEnv, old: oldEnv });
+        }
+        return newEnv;
     }
     onDidChangeEnvironment: Event<DidChangeEnvironmentEventArgs> = this._onDidChangeEnvironment.event;
     async resolveEnvironment(context: ResolveEnvironmentContext): Promise<PythonEnvironment | undefined> {
