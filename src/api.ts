@@ -1,4 +1,14 @@
-import { Uri, Disposable, MarkdownString, Event, LogOutputChannel, ThemeIcon, Terminal, TaskExecution } from 'vscode';
+import {
+    Uri,
+    Disposable,
+    MarkdownString,
+    Event,
+    LogOutputChannel,
+    ThemeIcon,
+    Terminal,
+    TaskExecution,
+    TerminalOptions,
+} from 'vscode';
 
 /**
  * The path to an icon, or a theme-specific configuration of icons.
@@ -954,7 +964,7 @@ export interface PythonPackageManagementApi {
      * @param packages The packages to install.
      * @param options Options for installing packages.
      */
-    installPackages(environment: PythonEnvironment, packages: string[], options: PackageInstallOptions): Promise<void>;
+    installPackages(environment: PythonEnvironment, packages: string[], options?: PackageInstallOptions): Promise<void>;
 
     /**
      * Uninstall packages from a Python Environment.
@@ -1027,25 +1037,27 @@ export interface PythonProjectModifyApi {
  */
 export interface PythonProjectApi extends PythonProjectCreationApi, PythonProjectGetterApi, PythonProjectModifyApi {}
 
+export interface PythonTerminalOptions extends TerminalOptions {
+    /**
+     * Whether to show the terminal.
+     */
+    disableActivation?: boolean;
+}
+
 export interface PythonTerminalCreateApi {
-    createTerminal(
-        environment: PythonEnvironment,
-        cwd: string | Uri,
-        envVars?: { [key: string]: string },
-    ): Promise<Terminal>;
+    createTerminal(environment: PythonEnvironment, options: PythonTerminalOptions): Promise<Terminal>;
 }
 
 export interface PythonTerminalExecutionOptions {
     cwd: string | Uri;
     args?: string[];
-
     show?: boolean;
 }
 
 export interface PythonTerminalRunApi {
     runInTerminal(environment: PythonEnvironment, options: PythonTerminalExecutionOptions): Promise<Terminal>;
     runInDedicatedTerminal(
-        terminalKey: Uri,
+        terminalKey: Uri | string,
         environment: PythonEnvironment,
         options: PythonTerminalExecutionOptions,
     ): Promise<Terminal>;
@@ -1082,7 +1094,7 @@ export interface PythonTaskRunApi {
 export interface PythonBackgroundRunOptions {
     args: string[];
     cwd?: string;
-    env?: { [key: string]: string };
+    env?: { [key: string]: string | undefined };
 }
 export interface PythonBackgroundRunApi {
     runInBackground(environment: PythonEnvironment, options: PythonBackgroundRunOptions): Promise<PythonProcess>;

@@ -21,7 +21,7 @@ import {
     terminals,
     withProgress,
 } from '../../common/window.apis';
-import { IconPath, PythonEnvironment, PythonProject } from '../../api';
+import { IconPath, PythonEnvironment, PythonProject, PythonTerminalOptions } from '../../api';
 import { getActivationCommand, getDeactivationCommand, isActivatableEnvironment } from '../common/activation';
 import { showErrorMessage } from '../../common/errors/utils';
 import { quoteArgs } from '../execution/execUtils';
@@ -47,11 +47,7 @@ export interface TerminalActivation {
 }
 
 export interface TerminalCreation {
-    create(
-        environment: PythonEnvironment,
-        cwd?: string | Uri,
-        env?: { [key: string]: string | null | undefined },
-    ): Promise<Terminal>;
+    create(environment: PythonEnvironment, options: PythonTerminalOptions): Promise<Terminal>;
 }
 
 export interface TerminalGetters {
@@ -61,7 +57,7 @@ export interface TerminalGetters {
         createNew?: boolean,
     ): Promise<Terminal>;
     getDedicatedTerminal(
-        uri: Uri,
+        terminalKey: Uri | string,
         project: Uri | PythonProject,
         environment: PythonEnvironment,
         createNew?: boolean,
@@ -291,18 +287,24 @@ export class TerminalManagerImpl implements TerminalManager {
         }
     }
 
-    public async create(
-        environment: PythonEnvironment,
-        cwd?: string | Uri | undefined,
-        env?: { [key: string]: string | null | undefined },
-    ): Promise<Terminal> {
-        const activatable = isActivatableEnvironment(environment);
+    public async create(environment: PythonEnvironment, options: PythonTerminalOptions): Promise<Terminal> {
+        // const name = options.name ?? `Python: ${environment.displayName}`;
         const newTerminal = createTerminal({
-            // name: `Python: ${environment.displayName}`,
-            iconPath: getIconPath(environment.iconPath),
-            cwd,
-            env,
+            name: options.name,
+            shellPath: options.shellPath,
+            shellArgs: options.shellArgs,
+            cwd: options.cwd,
+            env: options.env,
+            strictEnv: options.strictEnv,
+            message: options.message,
+            iconPath: options.iconPath ?? getIconPath(environment.iconPath),
+            hideFromUser: options.hideFromUser,
+            color: options.color,
+            location: options.location,
+            isTransient: options.isTransient,
         });
+        const activatable = !options.disableActivation && isActivatableEnvironment(environment);
+
         if (activatable) {
             try {
                 await withProgress(
@@ -318,17 +320,19 @@ export class TerminalManagerImpl implements TerminalManager {
                 showErrorMessage(`Failed to activate ${environment.displayName}`);
             }
         }
+
         return newTerminal;
     }
 
     private dedicatedTerminals = new Map<string, Terminal>();
     async getDedicatedTerminal(
-        uri: Uri,
+        terminalKey: Uri,
         project: Uri | PythonProject,
         environment: PythonEnvironment,
         createNew: boolean = false,
     ): Promise<Terminal> {
-        const key = `${environment.envId.id}:${path.normalize(uri.fsPath)}`;
+        const part = terminalKey instanceof Uri ? path.normalize(terminalKey.fsPath) : terminalKey;
+        const key = `${environment.envId.id}:${part}`;
         if (!createNew) {
             const terminal = this.dedicatedTerminals.get(key);
             if (terminal) {
@@ -337,15 +341,15 @@ export class TerminalManagerImpl implements TerminalManager {
         }
 
         const puri = project instanceof Uri ? project : project.uri;
-        const config = getConfiguration('python', uri);
+        const config = getConfiguration('python', terminalKey);
         const projectStat = await fsapi.stat(puri.fsPath);
         const projectDir = projectStat.isDirectory() ? puri.fsPath : path.dirname(puri.fsPath);
 
-        const uriStat = await fsapi.stat(uri.fsPath);
-        const uriDir = uriStat.isDirectory() ? uri.fsPath : path.dirname(uri.fsPath);
+        const uriStat = await fsapi.stat(terminalKey.fsPath);
+        const uriDir = uriStat.isDirectory() ? terminalKey.fsPath : path.dirname(terminalKey.fsPath);
         const cwd = config.get<boolean>('terminal.executeInFileDir', false) ? uriDir : projectDir;
 
-        const newTerminal = await this.create(environment, cwd);
+        const newTerminal = await this.create(environment, { cwd });
         this.dedicatedTerminals.set(key, newTerminal);
 
         const disable = onDidCloseTerminal((terminal) => {
@@ -374,7 +378,7 @@ export class TerminalManagerImpl implements TerminalManager {
         }
         const stat = await fsapi.stat(uri.fsPath);
         const cwd = stat.isDirectory() ? uri.fsPath : path.dirname(uri.fsPath);
-        const newTerminal = await this.create(environment, cwd);
+        const newTerminal = await this.create(environment, { cwd });
         this.projectTerminals.set(key, newTerminal);
 
         const disable = onDidCloseTerminal((terminal) => {
