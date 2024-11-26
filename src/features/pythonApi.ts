@@ -27,6 +27,7 @@ import {
     PythonTerminalExecutionOptions,
     PythonBackgroundRunOptions,
     PythonTerminalOptions,
+    DidChangeEnvironmentVariablesEventArgs,
 } from '../api';
 import {
     EnvironmentManagers,
@@ -45,18 +46,21 @@ import { TerminalManager } from './terminal/terminalManager';
 import { runAsTask } from './execution/runAsTask';
 import { runInTerminal } from './terminal/runInTerminal';
 import { runInBackground } from './execution/runInBackground';
+import { EnvVarManager } from './execution/envVariableManager';
 
 class PythonEnvironmentApiImpl implements PythonEnvironmentApi {
     private readonly _onDidChangeEnvironments = new EventEmitter<DidChangeEnvironmentsEventArgs>();
     private readonly _onDidChangeEnvironment = new EventEmitter<DidChangeEnvironmentEventArgs>();
     private readonly _onDidChangePythonProjects = new EventEmitter<DidChangePythonProjectsEventArgs>();
     private readonly _onDidChangePackages = new EventEmitter<DidChangePackagesEventArgs>();
+    private readonly _onDidChangeEnvironmentVariables = new EventEmitter<DidChangeEnvironmentVariablesEventArgs>();
 
     constructor(
         private readonly envManagers: EnvironmentManagers,
         private readonly projectManager: PythonProjectManager,
         private readonly projectCreators: ProjectCreators,
         private readonly terminalManager: TerminalManager,
+        private readonly envVarManager: EnvVarManager,
         private readonly disposables: Disposable[] = [],
     ) {
         this.disposables.push(
@@ -64,6 +68,7 @@ class PythonEnvironmentApiImpl implements PythonEnvironmentApi {
             this._onDidChangeEnvironments,
             this._onDidChangePythonProjects,
             this._onDidChangePackages,
+            this._onDidChangeEnvironmentVariables,
             this.envManagers.onDidChangeEnvironmentFiltered((e) => {
                 this._onDidChangeEnvironment.fire(e);
                 const location = e.uri?.fsPath ?? 'global';
@@ -71,6 +76,7 @@ class PythonEnvironmentApiImpl implements PythonEnvironmentApi {
                     `Python API: Changed environment from ${e.old?.displayName} to ${e.new?.displayName} for: ${location}`,
                 );
             }),
+            this.envVarManager.onDidChangeEnvironmentVariables((e) => this._onDidChangeEnvironmentVariables.fire(e)),
         );
     }
 
@@ -114,32 +120,38 @@ class PythonEnvironmentApiImpl implements PythonEnvironmentApi {
         if (scope === 'global' || (!Array.isArray(scope) && scope instanceof Uri)) {
             const manager = this.envManagers.getEnvironmentManager(scope === 'global' ? undefined : scope);
             if (!manager) {
-                return Promise.reject(new Error('No environment manager found'));
+                throw new Error('No environment manager found');
+            }
+            if (!manager.supportsCreate) {
+                throw new Error(`Environment manager does not support creating environments: ${manager.id}`);
             }
             return manager.create(scope);
         } else if (Array.isArray(scope) && scope.length === 1 && scope[0] instanceof Uri) {
-            const manager = this.envManagers.getEnvironmentManager(scope[0]);
-            if (!manager) {
-                return Promise.reject(new Error('No environment manager found'));
-            }
-            return manager.create(scope);
+            return this.createEnvironment(scope[0]);
         } else if (Array.isArray(scope) && scope.length > 0 && scope.every((s) => s instanceof Uri)) {
             const managers: InternalEnvironmentManager[] = [];
             scope.forEach((s) => {
                 const manager = this.envManagers.getEnvironmentManager(s);
-                if (manager && !managers.includes(manager)) {
+                if (manager && !managers.includes(manager) && manager.supportsCreate) {
                     managers.push(manager);
                 }
             });
 
             if (managers.length === 0) {
-                return Promise.reject(new Error('No environment managers found'));
+                throw new Error('No environment managers found');
             }
+
             const managerId = await pickEnvironmentManager(managers);
             if (!managerId) {
-                return Promise.reject(new Error('No environment manager selected'));
+                throw new Error('No environment manager selected');
             }
-            const result = await managers.find((m) => m.id === managerId)?.create(scope);
+
+            const manager = managers.find((m) => m.id === managerId);
+            if (!manager) {
+                throw new Error('No environment manager found');
+            }
+
+            const result = await manager.create(scope);
             return result;
         }
     }
@@ -315,6 +327,16 @@ class PythonEnvironmentApiImpl implements PythonEnvironmentApi {
     runInBackground(environment: PythonEnvironment, options: PythonBackgroundRunOptions): Promise<PythonProcess> {
         return runInBackground(environment, options);
     }
+
+    onDidChangeEnvironmentVariables: Event<DidChangeEnvironmentVariablesEventArgs> =
+        this._onDidChangeEnvironmentVariables.event;
+    getEnvironmentVariables(
+        uri: Uri,
+        overrides?: ({ [key: string]: string | undefined } | Uri)[],
+        baseEnvVar?: { [key: string]: string | undefined },
+    ): Promise<{ [key: string]: string | undefined }> {
+        return this.envVarManager.getEnvironmentVariables(uri, overrides, baseEnvVar);
+    }
 }
 
 let _deferred = createDeferred<PythonEnvironmentApi>();
@@ -323,8 +345,11 @@ export function setPythonApi(
     projectMgr: PythonProjectManager,
     projectCreators: ProjectCreators,
     terminalManager: TerminalManager,
+    envVarManager: EnvVarManager,
 ) {
-    _deferred.resolve(new PythonEnvironmentApiImpl(envMgr, projectMgr, projectCreators, terminalManager));
+    _deferred.resolve(
+        new PythonEnvironmentApiImpl(envMgr, projectMgr, projectCreators, terminalManager, envVarManager),
+    );
 }
 
 export function getPythonApi(): Promise<PythonEnvironmentApi> {

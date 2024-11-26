@@ -8,6 +8,7 @@ import {
     Terminal,
     TaskExecution,
     TerminalOptions,
+    FileChangeType,
 } from 'vscode';
 
 /**
@@ -1105,6 +1106,39 @@ export interface PythonExecutionApi
         PythonTerminalRunApi,
         PythonTaskRunApi,
         PythonBackgroundRunApi {}
+
+export interface DidChangeEnvironmentVariablesEventArgs {
+    uri?: Uri;
+    changeTye: FileChangeType;
+}
+
+export interface PythonEnvironmentVariablesApi {
+    /**
+     * Get environment variables for a workspace. This picks up `.env` file from the root of the
+     * workspace.
+     *
+     * Order of overrides:
+     * 1. `baseEnvVar` if given or `process.env`
+     * 2. `.env` file from the "python.envFile" setting in the workspace.
+     * 3. `.env` file at the root of the python project.
+     * 4. `overrides` in the order provided.
+     *
+     * @param uri The URI of the project, workspace or a file in a for which environment variables are required.
+     * @param overrides Additional environment variables to override the defaults.
+     * @param baseEnvVar The base environment variables that should be used as a starting point.
+     */
+    getEnvironmentVariables(
+        uri: Uri,
+        overrides?: ({ [key: string]: string | undefined } | Uri)[],
+        baseEnvVar?: { [key: string]: string | undefined },
+    ): Promise<{ [key: string]: string | undefined }>;
+
+    /**
+     * Event raised when `.env` file changes or any other monitored source of env variable changes.
+     */
+    onDidChangeEnvironmentVariables: Event<DidChangeEnvironmentVariablesEventArgs>;
+}
+
 /**
  * The API for interacting with Python environments, package managers, and projects.
  */
@@ -1112,4 +1146,5 @@ export interface PythonEnvironmentApi
     extends PythonEnvironmentManagerApi,
         PythonPackageManagerApi,
         PythonProjectApi,
-        PythonExecutionApi {}
+        PythonExecutionApi,
+        PythonEnvironmentVariablesApi {}
