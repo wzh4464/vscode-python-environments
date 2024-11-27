@@ -1,4 +1,4 @@
-/* eslint-disable @typescript-eslint/no-unused-vars */
+ 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { Serializable, SendHandle, MessageOptions } from 'child_process';
 import { EventEmitter } from 'node:events';
@@ -83,17 +83,14 @@ export class MockChildProcess extends EventEmitter {
         return true;
     }
 
-    // eslint-disable-next-line class-methods-use-this
     disconnect(): void {
         /* noop */
     }
 
-    // eslint-disable-next-line class-methods-use-this
     unref(): void {
         /* noop */
     }
 
-    // eslint-disable-next-line class-methods-use-this
     ref(): void {
         /* noop */
     }
