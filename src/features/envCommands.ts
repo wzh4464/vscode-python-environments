@@ -6,7 +6,7 @@ import {
     ProjectCreators,
     PythonProjectManager,
 } from '../internal.api';
-import { traceError, traceVerbose } from '../common/logging';
+import { traceError, traceInfo, traceVerbose } from '../common/logging';
 import { PythonEnvironment, PythonEnvironmentApi, PythonProject, PythonProjectCreator } from '../api';
 import * as path from 'path';
 import {
@@ -71,11 +71,25 @@ export async function createEnvironmentCommand(
 ): Promise<PythonEnvironment | undefined> {
     if (context instanceof EnvManagerTreeItem) {
         const manager = (context as EnvManagerTreeItem).manager;
-        const projects = await pickProjectMany(pm.getProjects());
-        if (projects) {
-            return await manager.create(projects.length === 0 ? 'global' : projects.map((p) => p.uri));
-        } else {
-            traceError(`No projects found for ${context}`);
+        const projects = pm.getProjects();
+        if (projects.length === 0) {
+            const env = await manager.create('global');
+            if (env) {
+                await em.setEnvironments('global', env);
+            }
+            return env;
+        } else if (projects.length > 0) {
+            const selected = await pickProjectMany(projects);
+            if (selected) {
+                const scope = selected.length === 0 ? 'global' : selected.map((p) => p.uri);
+                const env = await manager.create(scope);
+                if (env) {
+                    await em.setEnvironments(scope, env);
+                }
+                return env;
+            } else {
+                traceInfo('No project selected or global condition met for environment creation');
+            }
         }
     } else if (context instanceof Uri) {
         const manager = em.getEnvironmentManager(context as Uri);
@@ -93,7 +107,10 @@ export async function createEnvironmentCommand(
 export async function createAnyEnvironmentCommand(
     em: EnvironmentManagers,
     pm: PythonProjectManager,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    options?: any,
 ): Promise<PythonEnvironment | undefined> {
+    const select = options?.selectEnvironment;
     const projects = await pickProjectMany(pm.getProjects());
     if (projects && projects.length > 0) {
         const defaultManagers: InternalEnvironmentManager[] = [];
@@ -112,14 +129,25 @@ export async function createAnyEnvironmentCommand(
 
         const manager = em.managers.find((m) => m.id === managerId);
         if (manager) {
-            return await manager.create(projects.map((p) => p.uri));
+            const env = await manager.create(projects.map((p) => p.uri));
+            if (select) {
+                await em.setEnvironments(
+                    projects.map((p) => p.uri),
+                    env,
+                );
+            }
+            return env;
         }
     } else if (projects && projects.length === 0) {
         const managerId = await pickEnvironmentManager(em.managers.filter((m) => m.supportsCreate));
 
         const manager = em.managers.find((m) => m.id === managerId);
         if (manager) {
-            return await manager.create('global');
+            const env = await manager.create('global');
+            if (select) {
+                await manager.set(undefined, env);
+            }
+            return env;
         }
     }
 }
@@ -203,10 +231,24 @@ export async function setEnvironmentCommand(
         await setEnvironmentCommand([context], em, wm);
     } else if (context === undefined) {
         try {
-            const projects = await pickProjectMany(wm.getProjects());
+            const projects = wm.getProjects();
             if (projects && projects.length > 0) {
-                const uris = projects.map((p) => p.uri);
-                await setEnvironmentCommand(uris, em, wm);
+                const selected = await pickProjectMany(projects);
+                if (selected && selected.length > 0) {
+                    const uris = selected.map((p) => p.uri);
+                    await setEnvironmentCommand(uris, em, wm);
+                }
+            } else {
+                const globalEnvManager = em.getEnvironmentManager(undefined);
+                const recommended = globalEnvManager ? await globalEnvManager.get(undefined) : undefined;
+                const selected = await pickEnvironment(em.managers, globalEnvManager ? [globalEnvManager] : [], {
+                    projects: [],
+                    recommended,
+                    showBackButton: false,
+                });
+                if (selected) {
+                    await em.setEnvironments('global', selected);
+                }
             }
         } catch (ex) {
             if (ex === QuickInputButtons.Back) {
@@ -487,7 +529,7 @@ export async function runAsTaskCommand(item: unknown, api: PythonEnvironmentApi)
         const uri = item as Uri;
         const project = api.getPythonProject(uri);
         const environment = await api.getEnvironment(uri);
-        if (environment && project) {
+        if (environment) {
             return await runAsTask(
                 environment,
                 {
