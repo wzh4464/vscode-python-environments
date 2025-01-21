@@ -157,10 +157,18 @@ export class TerminalManagerImpl implements TerminalManager {
                     const execPromise = createDeferred<void>();
                     const execution = shellIntegration.executeCommand(command.executable, command.args ?? []);
                     const disposables: Disposable[] = [];
+                    let timer: NodeJS.Timeout | undefined = setTimeout(() => {
+                        execPromise.resolve();
+                        traceError(`Shell execution timed out: ${command.executable} ${command.args?.join(' ')}`);
+                    }, 2000);
                     disposables.push(
                         this.onTerminalShellExecutionEnd((e: TerminalShellExecutionEndEvent) => {
                             if (e.execution === execution) {
                                 execPromise.resolve();
+                                if (timer) {
+                                    clearTimeout(timer);
+                                    timer = undefined;
+                                }
                             }
                         }),
                         this.onTerminalShellExecutionStart((e: TerminalShellExecutionStartEvent) => {
@@ -170,8 +178,18 @@ export class TerminalManagerImpl implements TerminalManager {
                                 );
                             }
                         }),
+                        new Disposable(() => {
+                            if (timer) {
+                                clearTimeout(timer);
+                                timer = undefined;
+                            }
+                        }),
                     );
-                    await execPromise.promise;
+                    try {
+                        await execPromise.promise;
+                    } finally {
+                        disposables.forEach((d) => d.dispose());
+                    }
                 }
             } finally {
                 this.activatedTerminals.set(terminal, environment);
@@ -191,10 +209,18 @@ export class TerminalManagerImpl implements TerminalManager {
                     const execPromise = createDeferred<void>();
                     const execution = shellIntegration.executeCommand(command.executable, command.args ?? []);
                     const disposables: Disposable[] = [];
+                    let timer: NodeJS.Timeout | undefined = setTimeout(() => {
+                        execPromise.resolve();
+                        traceError(`Shell execution timed out: ${command.executable} ${command.args?.join(' ')}`);
+                    }, 2000);
                     disposables.push(
                         this.onTerminalShellExecutionEnd((e: TerminalShellExecutionEndEvent) => {
                             if (e.execution === execution) {
                                 execPromise.resolve();
+                                if (timer) {
+                                    clearTimeout(timer);
+                                    timer = undefined;
+                                }
                             }
                         }),
                         this.onTerminalShellExecutionStart((e: TerminalShellExecutionStartEvent) => {
@@ -202,6 +228,12 @@ export class TerminalManagerImpl implements TerminalManager {
                                 traceVerbose(
                                     `Shell execution started: ${command.executable} ${command.args?.join(' ')}`,
                                 );
+                            }
+                        }),
+                        new Disposable(() => {
+                            if (timer) {
+                                clearTimeout(timer);
+                                timer = undefined;
                             }
                         }),
                     );
@@ -348,7 +380,16 @@ export class TerminalManagerImpl implements TerminalManager {
         return env?.envId.id === environment?.envId.id;
     }
 
+    private isTaskTerminal(terminal: Terminal): boolean {
+        // TODO: Need API for core for this https://github.com/microsoft/vscode/issues/234440
+        return terminal.name.toLowerCase().includes('task');
+    }
+
     private async activateInternal(terminal: Terminal, environment: PythonEnvironment): Promise<void> {
+        if (this.isTaskTerminal(terminal)) {
+            return;
+        }
+
         if (terminal.shellIntegration) {
             await this.activateUsingShellIntegration(terminal.shellIntegration, terminal, environment);
         } else {
@@ -383,6 +424,10 @@ export class TerminalManagerImpl implements TerminalManager {
     }
 
     private async deactivateInternal(terminal: Terminal, environment: PythonEnvironment): Promise<void> {
+        if (this.isTaskTerminal(terminal)) {
+            return;
+        }
+
         if (terminal.shellIntegration) {
             await this.deactivateUsingShellIntegration(terminal.shellIntegration, terminal, environment);
         } else {
