@@ -54,6 +54,70 @@ See [api.ts](https://github.com/microsoft/vscode-python-environments/blob/main/s
 To consume these APIs you can look at the example here:
 https://github.com/microsoft/vscode-python-environments/blob/main/src/examples/README.md
 
+
+## Extension Dependency
+
+This section provides an overview of how the Python extension interacts with the Python Environments extension and other tool-specific extensions. The Python Environments extension allows users to create, manage, and remove Python environments and packages. It also provides an API that other extensions can use to support environment management or consume it for running Python tools or projects.  
+
+Tools that may rely on these APIs in their own extensions include:
+- **Debuggers** (e.g., `debugpy`)
+- **Linters** (e.g., Pylint, Flake8, Mypy)
+- **Formatters** (e.g., Black, autopep8)
+- **Language Server extensions** (e.g., Pylance, Jedi)
+- **Environment and Package Manager extensions** (e.g., Pixi, Conda, Hatch)
+
+### API Dependency
+The relationship between these extensions can be represented as follows:
+
+```mermaid
+graph TD
+    subgraph Language Features
+    B[Python Extension]
+    E[Pylance]
+    end
+
+    subgraph Code Execution
+    A[Python Environments] <-. Optional .-> B
+    C["Linters, Formatters, Debugger"]
+    E -. Optional .-> B
+    A --> C
+    A <--> P
+
+    subgraph Environment Extensions
+    P["Pixi, Pyenv, etc"]
+    end
+    end
+```
+
+Users who do not need to execute code or work in **Virtual Workspaces** can use the Python extension to access language features like hover, completion, and go-to definition. However, executing code (e.g., running a debugger, linter, or formatter), creating/modifying environments, or managing packages requires the Python Environments extension to enable these functionalities.
+
+### Trust Relationship Between Python and Python Environments Extensions
+
+VS Code supports trust management, allowing extensions to function in either **trusted** or **untrusted** scenarios. Code execution and tools that can modify the user’s environment are typically unavailable in untrusted scenarios.  
+
+The relationship is illustrated below:
+
+```mermaid
+graph TD
+
+    subgraph Handles Untrusted Code
+    B[Python Extension]
+    E[Pylance] -. Optional .-> B
+    end
+
+    subgraph Only Trusted Code
+    A[Python Environments] <-. Optional .-> B
+    C["Linters, Formatters, Debugger"]
+    A --> C
+    A <--> P
+    subgraph Environment Extensions
+    P["Pixi, Pyenv, etc"]
+    end
+    end
+```
+
+In **trusted mode**, the Python Environments extension supports tasks like managing environments, installing/removing packages, and running tools. In **untrusted mode**, functionality is limited to language features, ensuring a secure and restricted environment.
+
 ## Contributing
 
 This project welcomes contributions and suggestions. Most contributions require you to agree to a
