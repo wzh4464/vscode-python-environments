@@ -31,6 +31,7 @@ import {
 } from '../../common/window.apis';
 import { showErrorMessage } from '../../common/errors/utils';
 import { Common, VenvManagerStrings } from '../../common/localize';
+import unsafeEntries from '../../common/utils/unsafeEntries';
 import { isUvInstalled, runUV, runPython } from './helpers';
 import { getWorkspacePackagesToInstall } from './pipUtils';
 
@@ -117,56 +118,65 @@ async function getPythonInfo(env: NativeEnvInfo): Promise<PythonEnvironmentInfo>
         const name = `${venvName} (${sv})`;
 
         const binDir = path.dirname(env.executable);
+        
+        interface VenvManager {
+            activate: PythonCommandRunConfiguration,
+            deactivate: PythonCommandRunConfiguration,
+            /// true if created by the builtin `venv` module and not just the `virtualenv` package.
+            supportsStdlib: boolean,
+        }
+        
+        /** Venv activation/deactivation using a command */
+        const cmdMgr = (suffix = ''): VenvManager => ({
+            activate: { executable: path.join(binDir, `activate${suffix}`) },
+            deactivate: { executable: path.join(binDir, `deactivate${suffix}`) },
+            supportsStdlib: ['', '.bat'].includes(suffix),
+        });
+        /** Venv activation/deactivation for a POSIXy shell */
+        const sourceMgr = (suffix = '', executable = 'source'): VenvManager => ({
+            activate: { executable, args: [path.join(binDir, `activate${suffix}`)] },
+            deactivate: { executable: 'deactivate' },
+            supportsStdlib: ['', '.ps1'].includes(suffix),
+        });
+        // satisfies `Record` to make sure all shells are covered
+        const venvManagers: Record<TerminalShellType, VenvManager> = {
+            // Shells supported by the builtin `venv` module
+            [TerminalShellType.bash]: sourceMgr(),
+            [TerminalShellType.gitbash]: sourceMgr(),
+            [TerminalShellType.zsh]: sourceMgr(),
+            [TerminalShellType.wsl]: sourceMgr(),
+            [TerminalShellType.ksh]: sourceMgr('', '.'),
+            [TerminalShellType.powershell]: sourceMgr('.ps1', '&'),
+            [TerminalShellType.powershellCore]: sourceMgr('.ps1', '&'),
+            [TerminalShellType.commandPrompt]: cmdMgr('.bat'),
+            // Shells supported by the `virtualenv` package
+            [TerminalShellType.cshell]: sourceMgr('.csh'),
+            [TerminalShellType.tcshell]: sourceMgr('.csh'),
+            [TerminalShellType.fish]: sourceMgr('.fish'),
+            [TerminalShellType.xonsh]: sourceMgr('.xsh'),
+            [TerminalShellType.nushell]: {
+                activate: { executable: 'overlay', args: ['use', path.join(binDir, 'activate.nu')] },
+                deactivate: { executable: 'overlay', args: ['hide', 'activate'] },
+                supportsStdlib: false,
+            },
+            // Fallback
+            [TerminalShellType.unknown]: isWindows() ? cmdMgr() : sourceMgr(),
+        };
 
         const shellActivation: Map<TerminalShellType, PythonCommandRunConfiguration[]> = new Map();
         const shellDeactivation: Map<TerminalShellType, PythonCommandRunConfiguration[]> = new Map();
 
-        // Commands for bash
-        shellActivation.set(TerminalShellType.bash, [{ executable: 'source', args: [path.join(binDir, 'activate')] }]);
-        shellDeactivation.set(TerminalShellType.bash, [{ executable: 'deactivate' }]);
-
-        // Commands for csh
-        shellActivation.set(TerminalShellType.cshell, [
-            { executable: 'source', args: [path.join(binDir, 'activate')] },
-        ]);
-        shellDeactivation.set(TerminalShellType.cshell, [{ executable: 'deactivate' }]);
-
-        // Commands for zsh
-        shellActivation.set(TerminalShellType.zsh, [{ executable: 'source', args: [path.join(binDir, 'activate')] }]);
-        shellDeactivation.set(TerminalShellType.zsh, [{ executable: 'deactivate' }]);
-
-        // Commands for powershell
-        shellActivation.set(TerminalShellType.powershell, [
-            { executable: '&', args: [path.join(binDir, 'Activate.ps1')] },
-        ]);
-        shellActivation.set(TerminalShellType.powershellCore, [
-            { executable: '&', args: [path.join(binDir, 'Activate.ps1')] },
-        ]);
-        shellDeactivation.set(TerminalShellType.powershell, [{ executable: 'deactivate' }]);
-        shellDeactivation.set(TerminalShellType.powershellCore, [{ executable: 'deactivate' }]);
-
-        // Commands for command prompt
-        shellActivation.set(TerminalShellType.commandPrompt, [{ executable: path.join(binDir, 'activate.bat') }]);
-        shellDeactivation.set(TerminalShellType.commandPrompt, [{ executable: path.join(binDir, 'deactivate.bat') }]);
-
-        // Commands for fish
-        if (await fsapi.pathExists(path.join(binDir, 'activate.fish'))) {
-            shellActivation.set(TerminalShellType.fish, [
-                { executable: 'source', args: [path.join(binDir, 'activate.fish')] },
-            ]);
-            shellDeactivation.set(TerminalShellType.fish, [{ executable: 'deactivate' }]);
-        }
-
-        // Commands for unknown cases
-        if (isWindows()) {
-            shellActivation.set(TerminalShellType.unknown, [{ executable: path.join(binDir, 'activate') }]);
-            shellDeactivation.set(TerminalShellType.unknown, [{ executable: 'deactivate' }]);
-        } else {
-            shellActivation.set(TerminalShellType.unknown, [
-                { executable: 'source', args: [path.join(binDir, 'activate')] },
-            ]);
-            shellDeactivation.set(TerminalShellType.unknown, [{ executable: 'deactivate' }]);
-        }
+        await Promise.all(unsafeEntries(venvManagers).map(async ([shell, mgr]) => {
+            if (
+                !mgr.supportsStdlib &&
+                mgr.activate.args &&
+                !await fsapi.pathExists(mgr.activate.args[mgr.activate.args.length - 1])
+            ) {
+                return;
+            }
+            shellActivation.set(shell, [mgr.activate]);
+            shellDeactivation.set(shell, [mgr.deactivate]);
+        }));
 
         return {
             name: name,
