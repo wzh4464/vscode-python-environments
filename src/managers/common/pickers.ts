@@ -2,6 +2,7 @@ import { QuickInputButtons, QuickPickItem, QuickPickItemButtonEvent, QuickPickIt
 import { Common, PackageManagement } from '../../common/localize';
 import { launchBrowser } from '../../common/env.apis';
 import { showInputBoxWithButtons, showQuickPickWithButtons, showTextDocument } from '../../common/window.apis';
+import { Installable } from './utils';
 
 const OPEN_BROWSER_BUTTON = {
     iconPath: new ThemeIcon('globe'),
@@ -17,50 +18,6 @@ const EDIT_ARGUMENTS_BUTTON = {
     iconPath: new ThemeIcon('pencil'),
     tooltip: PackageManagement.editArguments,
 };
-
-export interface Installable {
-    /**
-     * The name of the package, requirements, lock files, or step name.
-     */
-    readonly name: string;
-
-    /**
-     * The name of the package, requirements, pyproject.toml or any other project file, etc.
-     */
-    readonly displayName: string;
-
-    /**
-     * Arguments passed to the package manager to install the package.
-     *
-     * @example
-     *  ['debugpy==1.8.7'] for `pip install debugpy==1.8.7`.
-     *  ['--pre', 'debugpy'] for `pip install --pre debugpy`.
-     *  ['-r', 'requirements.txt'] for `pip install -r requirements.txt`.
-     */
-    readonly args?: string[];
-
-    /**
-     * Installable group name, this will be used to group installable items in the UI.
-     *
-     * @example
-     *  `Requirements` for any requirements file.
-     *  `Packages` for any package.
-     */
-    readonly group?: string;
-
-    /**
-     * Description about the installable item. This can also be path to the requirements,
-     * version of the package, or any other project file path.
-     */
-    readonly description?: string;
-
-    /**
-     * External Uri to the package on pypi or docs.
-     * @example
-     *  https://pypi.org/project/debugpy/ for `debugpy`.
-     */
-    readonly uri?: Uri;
-}
 
 function handleItemButton(uri?: Uri) {
     if (uri) {
@@ -117,20 +74,67 @@ async function enterPackageManually(filler?: string): Promise<string[] | undefin
     return input?.split(' ');
 }
 
+interface GroupingResult {
+    items: PackageQuickPickItem[];
+    installedItems: PackageQuickPickItem[];
+}
+
+function groupByInstalled(items: PackageQuickPickItem[], installed?: string[]): GroupingResult {
+    const installedItems: PackageQuickPickItem[] = [];
+    const result: PackageQuickPickItem[] = [];
+    items.forEach((i) => {
+        if (installed?.find((p) => i.id === p)) {
+            installedItems.push(i);
+        } else {
+            result.push(i);
+        }
+    });
+    const installedSeparator: PackageQuickPickItem = {
+        id: 'installed-sep',
+        label: PackageManagement.installed,
+        kind: QuickPickItemKind.Separator,
+    };
+    const commonPackages: PackageQuickPickItem = {
+        id: 'common-packages-sep',
+        label: PackageManagement.commonPackages,
+        kind: QuickPickItemKind.Separator,
+    };
+    return {
+        items: [installedSeparator, ...installedItems, commonPackages, ...result],
+        installedItems,
+    };
+}
+
+export interface CommonPackagesResult {
+    install: string[];
+    uninstall: string[];
+}
+
+function selectionsToResult(selections: string[], installed: string[]): CommonPackagesResult {
+    const install: string[] = selections;
+    const uninstall: string[] = [];
+    installed.forEach((i) => {
+        if (!selections.find((s) => i === s)) {
+            uninstall.push(i);
+        }
+    });
+    return {
+        install,
+        uninstall,
+    };
+}
+
 export async function selectFromCommonPackagesToInstall(
     common: Installable[],
-    installed?: string[],
+    installed: string[],
     preSelected?: PackageQuickPickItem[] | undefined,
-): Promise<string[] | undefined> {
-    const items: PackageQuickPickItem[] = common.map(installableToQuickPickItem);
-    const preSelectedItems = items
-        .filter((i) => i.kind !== QuickPickItemKind.Separator)
-        .filter((i) => installed?.find((p) => i.id === p) || preSelected?.find((s) => s.id === i.id));
-
+): Promise<CommonPackagesResult | undefined> {
+    const { installedItems, items } = groupByInstalled(common.map(installableToQuickPickItem), installed);
+    const preSelectedItems = items.filter((i) => (preSelected ?? installedItems).some((s) => s.id === i.id));
     let selected: PackageQuickPickItem | PackageQuickPickItem[] | undefined;
     try {
         selected = await showQuickPickWithButtons(
-            items,
+            items as PackageQuickPickItem[],
             {
                 placeHolder: PackageManagement.selectPackagesToInstall,
                 ignoreFocusOut: true,
@@ -163,21 +167,25 @@ export async function selectFromCommonPackagesToInstall(
 
     if (selected && Array.isArray(selected)) {
         if (selected.find((s) => s.label === PackageManagement.enterPackageNames)) {
-            const filler = selected
-                .filter((s) => s.label !== PackageManagement.enterPackageNames)
-                .map((s) => s.id)
-                .join(' ');
+            const filtered = selected.filter((s) => s.label !== PackageManagement.enterPackageNames);
+            const filler = filtered.map((s) => s.id).join(' ');
             try {
-                const result = await enterPackageManually(filler);
-                return result;
+                const selections = await enterPackageManually(filler);
+                if (selections) {
+                    return selectionsToResult(selections, installed);
+                }
+                return undefined;
             } catch (ex) {
                 if (ex === QuickInputButtons.Back) {
-                    return selectFromCommonPackagesToInstall(common, installed, selected);
+                    return selectFromCommonPackagesToInstall(common, installed, filtered);
                 }
                 return undefined;
             }
         } else {
-            return selected.map((s) => s.id);
+            return selectionsToResult(
+                selected.map((s) => s.id),
+                installed,
+            );
         }
     }
 }

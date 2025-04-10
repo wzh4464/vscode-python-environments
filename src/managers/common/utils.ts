@@ -1,7 +1,50 @@
 import * as os from 'os';
-import { Package, PythonEnvironment } from '../../api';
-import { showQuickPick } from '../../common/window.apis';
-import { PackageManagement } from '../../common/localize';
+import { PythonEnvironment } from '../../api';
+import { Uri } from 'vscode';
+
+export interface Installable {
+    /**
+     * The name of the package, requirements, lock files, or step name.
+     */
+    readonly name: string;
+
+    /**
+     * The name of the package, requirements, pyproject.toml or any other project file, etc.
+     */
+    readonly displayName: string;
+
+    /**
+     * Arguments passed to the package manager to install the package.
+     *
+     * @example
+     *  ['debugpy==1.8.7'] for `pip install debugpy==1.8.7`.
+     *  ['--pre', 'debugpy'] for `pip install --pre debugpy`.
+     *  ['-r', 'requirements.txt'] for `pip install -r requirements.txt`.
+     */
+    readonly args?: string[];
+
+    /**
+     * Installable group name, this will be used to group installable items in the UI.
+     *
+     * @example
+     *  `Requirements` for any requirements file.
+     *  `Packages` for any package.
+     */
+    readonly group?: string;
+
+    /**
+     * Description about the installable item. This can also be path to the requirements,
+     * version of the package, or any other project file path.
+     */
+    readonly description?: string;
+
+    /**
+     * External Uri to the package on pypi or docs.
+     * @example
+     *  https://pypi.org/project/debugpy/ for `debugpy`.
+     */
+    readonly uri?: Uri;
+}
 
 export function isWindows(): boolean {
     return process.platform === 'win32';
@@ -89,16 +132,9 @@ export function getLatest(collection: PythonEnvironment[]): PythonEnvironment | 
     return latest;
 }
 
-export async function getPackagesToUninstall(packages: Package[]): Promise<Package[] | undefined> {
-    const items = packages.map((p) => ({
-        label: p.name,
-        description: p.version,
-        p,
-    }));
-    const selected = await showQuickPick(items, {
-        placeHolder: PackageManagement.selectPackagesToUninstall,
-        ignoreFocusOut: true,
-        canPickMany: true,
-    });
-    return Array.isArray(selected) ? selected?.map((s) => s.p) : undefined;
+export function mergePackages(common: Installable[], installed: string[]): Installable[] {
+    const notInCommon = installed.filter((pkg) => !common.some((c) => c.name === pkg));
+    return common
+        .concat(notInCommon.map((pkg) => ({ name: pkg, displayName: pkg })))
+        .sort((a, b) => a.name.localeCompare(b.name));
 }
