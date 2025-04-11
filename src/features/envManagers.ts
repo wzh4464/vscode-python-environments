@@ -261,10 +261,12 @@ export class PythonEnvironmentManagers implements EnvironmentManagers {
         const manager = this.getEnvironmentManager(customScope);
         if (!manager) {
             traceError(
-                `No environment manager found for: ${
+                `No environment manager found for scope: ${
                     customScope instanceof Uri ? customScope.fsPath : customScope?.environmentPath?.fsPath
                 }`,
             );
+
+            traceError(this.managers.map((m) => m.id).join(', '));
             return;
         }
         await manager.set(scope, environment);
@@ -298,10 +300,11 @@ export class PythonEnvironmentManagers implements EnvironmentManagers {
             const manager = this.managers.find((m) => m.id === environment.envId.managerId);
             if (!manager) {
                 traceError(
-                    `No environment manager found for: ${
+                    `No environment manager found for [${environment.envId.managerId}]: ${
                         environment.environmentPath ? environment.environmentPath.fsPath : ''
                     }`,
                 );
+                traceError(this.managers.map((m) => m.id).join(', '));
                 return;
             }
 
