@@ -727,12 +727,12 @@ export interface DidChangePythonProjectsEventArgs {
 export type PackageManagementOptions =
     | {
           /**
-           * Upgrade the packages if it is already installed.
+           * Upgrade the packages if they are already installed.
            */
           upgrade?: boolean;
 
           /**
-           * Show option to skip package installation
+           * Show option to skip package installation or uninstallation.
            */
           showSkipOption?: boolean;
           /**
@@ -747,12 +747,12 @@ export type PackageManagementOptions =
       }
     | {
           /**
-           * Upgrade the packages if it is already installed.
+           * Upgrade the packages if they are already installed.
            */
           upgrade?: boolean;
 
           /**
-           * Show option to skip package installation
+           * Show option to skip package installation or uninstallation.
            */
           showSkipOption?: boolean;
           /**
