@@ -47,6 +47,7 @@ import { runAsTask } from './execution/runAsTask';
 import { runInTerminal } from './terminal/runInTerminal';
 import { runInBackground } from './execution/runInBackground';
 import { EnvVarManager } from './execution/envVariableManager';
+import { checkUri } from '../common/utils/pathUtils';
 
 class PythonEnvironmentApiImpl implements PythonEnvironmentApi {
     private readonly _onDidChangeEnvironments = new EventEmitter<DidChangeEnvironmentsEventArgs>();
@@ -167,36 +168,39 @@ class PythonEnvironmentApiImpl implements PythonEnvironmentApi {
         return manager.remove(environment);
     }
     async refreshEnvironments(scope: RefreshEnvironmentsScope): Promise<void> {
-        if (scope === undefined) {
-            await Promise.all(this.envManagers.managers.map((manager) => manager.refresh(scope)));
+        const currentScope = checkUri(scope) as RefreshEnvironmentsScope;
+
+        if (currentScope === undefined) {
+            await Promise.all(this.envManagers.managers.map((manager) => manager.refresh(currentScope)));
             return Promise.resolve();
         }
-        const manager = this.envManagers.getEnvironmentManager(scope);
+        const manager = this.envManagers.getEnvironmentManager(currentScope);
         if (!manager) {
-            return Promise.reject(new Error(`No environment manager found for: ${scope.fsPath}`));
+            return Promise.reject(new Error(`No environment manager found for: ${currentScope.fsPath}`));
         }
-        return manager.refresh(scope);
+        return manager.refresh(currentScope);
     }
     async getEnvironments(scope: GetEnvironmentsScope): Promise<PythonEnvironment[]> {
-        if (scope === 'all' || scope === 'global') {
-            const promises = this.envManagers.managers.map((manager) => manager.getEnvironments(scope));
+        const currentScope = checkUri(scope) as GetEnvironmentsScope;
+        if (currentScope === 'all' || currentScope === 'global') {
+            const promises = this.envManagers.managers.map((manager) => manager.getEnvironments(currentScope));
             const items = await Promise.all(promises);
             return items.flat();
         }
-        const manager = this.envManagers.getEnvironmentManager(scope);
+        const manager = this.envManagers.getEnvironmentManager(currentScope);
         if (!manager) {
             return [];
         }
 
-        const items = await manager.getEnvironments(scope);
+        const items = await manager.getEnvironments(currentScope);
         return items;
     }
     onDidChangeEnvironments: Event<DidChangeEnvironmentsEventArgs> = this._onDidChangeEnvironments.event;
     setEnvironment(scope: SetEnvironmentScope, environment?: PythonEnvironment): Promise<void> {
-        return this.envManagers.setEnvironment(scope, environment);
+        return this.envManagers.setEnvironment(checkUri(scope) as SetEnvironmentScope, environment);
     }
     async getEnvironment(scope: GetEnvironmentScope): Promise<PythonEnvironment | undefined> {
-        return this.envManagers.getEnvironment(scope);
+        return this.envManagers.getEnvironment(checkUri(scope) as GetEnvironmentScope);
     }
     onDidChangeEnvironment: Event<DidChangeEnvironmentEventArgs> = this._onDidChangeEnvironment.event;
     async resolveEnvironment(context: ResolveEnvironmentContext): Promise<PythonEnvironment | undefined> {
@@ -267,7 +271,7 @@ class PythonEnvironmentApiImpl implements PythonEnvironmentApi {
     }
     onDidChangePythonProjects: Event<DidChangePythonProjectsEventArgs> = this._onDidChangePythonProjects.event;
     getPythonProject(uri: Uri): PythonProject | undefined {
-        return this.projectManager.get(uri);
+        return this.projectManager.get(checkUri(uri) as Uri);
     }
     registerPythonProjectCreator(creator: PythonProjectCreator): Disposable {
         return this.projectCreators.registerPythonProjectCreator(creator);
@@ -310,7 +314,7 @@ class PythonEnvironmentApiImpl implements PythonEnvironmentApi {
         overrides?: ({ [key: string]: string | undefined } | Uri)[],
         baseEnvVar?: { [key: string]: string | undefined },
     ): Promise<{ [key: string]: string | undefined }> {
-        return this.envVarManager.getEnvironmentVariables(uri, overrides, baseEnvVar);
+        return this.envVarManager.getEnvironmentVariables(checkUri(uri) as Uri, overrides, baseEnvVar);
     }
 }
 
