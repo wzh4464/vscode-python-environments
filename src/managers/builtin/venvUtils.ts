@@ -244,6 +244,12 @@ export async function findVirtualEnvironments(
     return collection;
 }
 
+export async function getDefaultGlobalVenvLocation(): Promise<Uri> {
+    const dir = path.join(os.homedir(), '.virtualenvs');
+    await fsapi.ensureDir(dir);
+    return Uri.file(dir);
+}
+
 function getVenvFoldersSetting(): string[] {
     const settings = getConfiguration('python');
     return settings.get<string[]>('venvFolders', []);
@@ -400,6 +406,56 @@ async function createWithProgress(
     );
 }
 
+function ensureGlobalEnv(basePythons: PythonEnvironment[], log: LogOutputChannel): PythonEnvironment[] {
+    if (basePythons.length === 0) {
+        log.error('No base python found');
+        showErrorMessage(VenvManagerStrings.venvErrorNoBasePython);
+        throw new Error('No base python found');
+    }
+
+    const filtered = basePythons.filter((e) => e.version.startsWith('3.'));
+    if (filtered.length === 0) {
+        log.error('Did not find any base python 3.*');
+        showErrorMessage(VenvManagerStrings.venvErrorNoPython3);
+        basePythons.forEach((e, i) => {
+            log.error(`${i}: ${e.version} : ${e.environmentPath.fsPath}`);
+        });
+        throw new Error('Did not find any base python 3.*');
+    }
+
+    return sortEnvironments(filtered);
+}
+
+export async function quickCreateVenv(
+    nativeFinder: NativePythonFinder,
+    api: PythonEnvironmentApi,
+    log: LogOutputChannel,
+    manager: EnvironmentManager,
+    baseEnv: PythonEnvironment,
+    venvRoot: Uri,
+    additionalPackages?: string[],
+): Promise<PythonEnvironment | undefined> {
+    const project = api.getPythonProject(venvRoot);
+
+    sendTelemetryEvent(EventNames.VENV_CREATION, undefined, { creationType: 'quick' });
+    const installables = await getProjectInstallable(api, project ? [project] : undefined);
+    const allPackages = [];
+    allPackages.push(...(installables?.flatMap((i) => i.args ?? []) ?? []));
+    if (additionalPackages) {
+        allPackages.push(...additionalPackages);
+    }
+    return await createWithProgress(
+        nativeFinder,
+        api,
+        log,
+        manager,
+        baseEnv,
+        venvRoot,
+        path.join(venvRoot.fsPath, '.venv'),
+        { install: allPackages, uninstall: [] },
+    );
+}
+
 export async function createPythonVenv(
     nativeFinder: NativePythonFinder,
     api: PythonEnvironmentApi,
@@ -407,32 +463,26 @@ export async function createPythonVenv(
     manager: EnvironmentManager,
     basePythons: PythonEnvironment[],
     venvRoot: Uri,
+    options: { showQuickAndCustomOptions: boolean; additionalPackages?: string[] },
 ): Promise<PythonEnvironment | undefined> {
-    if (basePythons.length === 0) {
-        log.error('No base python found');
-        showErrorMessage(VenvManagerStrings.venvErrorNoBasePython);
-        return;
-    }
-
-    const filtered = basePythons.filter((e) => e.version.startsWith('3.'));
-    if (filtered.length === 0) {
-        log.error('Did not find any base python 3.*');
-        showErrorMessage(VenvManagerStrings.venvErrorNoPython3);
-        basePythons.forEach((e) => {
-            log.error(`available base python: ${e.version}`);
-        });
-        return;
-    }
-
-    const sortedEnvs = sortEnvironments(filtered);
+    const sortedEnvs = ensureGlobalEnv(basePythons, log);
     const project = api.getPythonProject(venvRoot);
 
-    const customize = await createWithCustomization(sortedEnvs[0].version);
+    let customize: boolean | undefined = true;
+    if (options.showQuickAndCustomOptions) {
+        customize = await createWithCustomization(sortedEnvs[0].version);
+    }
+
     if (customize === undefined) {
         return;
     } else if (customize === false) {
         sendTelemetryEvent(EventNames.VENV_CREATION, undefined, { creationType: 'quick' });
         const installables = await getProjectInstallable(api, project ? [project] : undefined);
+        const allPackages = [];
+        allPackages.push(...(installables?.flatMap((i) => i.args ?? []) ?? []));
+        if (options.additionalPackages) {
+            allPackages.push(...options.additionalPackages);
+        }
         return await createWithProgress(
             nativeFinder,
             api,
@@ -441,7 +491,7 @@ export async function createPythonVenv(
             sortedEnvs[0],
             venvRoot,
             path.join(venvRoot.fsPath, '.venv'),
-            { install: installables?.flatMap((i) => i.args ?? []), uninstall: [] },
+            { install: allPackages, uninstall: [] },
         );
     } else {
         sendTelemetryEvent(EventNames.VENV_CREATION, undefined, { creationType: 'custom' });
@@ -478,8 +528,13 @@ export async function createPythonVenv(
         { showSkipOption: true, install: [] },
         project ? [project] : undefined,
     );
+    const allPackages = [];
+    allPackages.push(...(packages?.install ?? []), ...(options.additionalPackages ?? []));
 
-    return await createWithProgress(nativeFinder, api, log, manager, basePython, venvRoot, envPath, packages);
+    return await createWithProgress(nativeFinder, api, log, manager, basePython, venvRoot, envPath, {
+        install: allPackages,
+        uninstall: [],
+    });
 }
 
 export async function removeVenv(environment: PythonEnvironment, log: LogOutputChannel): Promise<boolean> {
