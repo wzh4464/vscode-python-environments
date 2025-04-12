@@ -340,10 +340,24 @@ function nativeToPythonEnv(
 ): PythonEnvironment | undefined {
     if (!(e.prefix && e.executable && e.version)) {
         log.warn(`Invalid conda environment: ${JSON.stringify(e)}`);
-        return;
+        return undefined;
     }
 
+    const shellActivation: Map<string, PythonCommandRunConfiguration[]> = new Map();
+    const shellDeactivation: Map<string, PythonCommandRunConfiguration[]> = new Map();
+    const condaRoot = path.dirname(path.dirname(conda));
+
     if (e.name === 'base') {
+        shellActivation.set('gitbash', [{ executable: pathForGitBash(conda), args: ['activate', 'base'] }]);
+        shellDeactivation.set('gitbash', [{ executable: pathForGitBash(conda), args: ['deactivate'] }]);
+        shellActivation.set('zsh', [
+            { 
+                executable: 'source', 
+                args: [`"${path.join(condaRoot, 'etc', 'profile.d', 'conda.sh')}" && conda activate base && clear`] 
+            }
+        ]);
+        shellDeactivation.set('zsh', [{ executable: 'conda', args: ['deactivate'] }]);
+
         const environment = api.createPythonEnvironmentItem(
             getNamedCondaPythonInfo('base', e.prefix, e.executable, e.version, conda),
             manager,
@@ -351,6 +365,18 @@ function nativeToPythonEnv(
         log.info(`Found base environment: ${e.prefix}`);
         return environment;
     } else if (!isPrefixOf(condaPrefixes, e.prefix)) {
+        shellActivation.set('gitbash', [
+            { executable: pathForGitBash(conda), args: ['activate', pathForGitBash(e.prefix)] },
+        ]);
+        shellDeactivation.set('gitbash', [{ executable: pathForGitBash(conda), args: ['deactivate'] }]);
+        shellActivation.set('zsh', [
+            { 
+                executable: 'source', 
+                args: [`"${path.join(condaRoot, 'etc', 'profile.d', 'conda.sh')}" && conda activate ${e.prefix} && clear`] 
+            }
+        ]);
+        shellDeactivation.set('zsh', [{ executable: 'conda', args: ['deactivate'] }]);
+
         const environment = api.createPythonEnvironmentItem(
             getPrefixesCondaPythonInfo(e.prefix, e.executable, e.version, conda),
             manager,
@@ -360,6 +386,17 @@ function nativeToPythonEnv(
     } else {
         const basename = path.basename(e.prefix);
         const name = e.name ?? basename;
+
+        shellActivation.set('gitbash', [{ executable: pathForGitBash(conda), args: ['activate', name] }]);
+        shellDeactivation.set('gitbash', [{ executable: pathForGitBash(conda), args: ['deactivate'] }]);
+        shellActivation.set('zsh', [
+            { 
+                executable: 'source', 
+                args: [`"${path.join(condaRoot, 'etc', 'profile.d', 'conda.sh')}" && conda activate ${name} && clear`] 
+            }
+        ]);
+        shellDeactivation.set('zsh', [{ executable: 'conda', args: ['deactivate'] }]);
+
         const environment = api.createPythonEnvironmentItem(
             getNamedCondaPythonInfo(name, e.prefix, e.executable, e.version, conda),
             manager,
